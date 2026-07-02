@@ -1,15 +1,29 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
+# ui/dialogs/edit_transaction_dialog.py
+"""
+Диалог редактирования транзакции
+Переведено на PySide6 с сохранением функциональности Tkinter версии
+"""
+
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QComboBox, QGroupBox, QFormLayout, QMessageBox, QDateEdit
+)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 from datetime import datetime
 
 from core.database import DatabaseManager
 from ui.widgets.window_utils import center_window_relative
-from ui.widgets.calendar_widgets import TtkDateEntry  # если используете
+from ui.widgets.date_widgets import DateNavigator, DateUtils
+from ui.widgets.calendar_widgets import TtkDateEntry
 
-class EditTransactionDialog(tk.Toplevel):
-    """Диалог редактирования транзакции."""
+
+class EditTransactionDialog(QDialog):
+    """Диалог редактирования транзакции"""
     
-    def __init__(self, parent, db_manager, transaction_data):
+    data_updated = Signal()
+    
+    def __init__(self, parent=None, db_manager=None, transaction_data=None):
         super().__init__(parent)
         self.parent = parent
         self.db = db_manager
@@ -17,123 +31,178 @@ class EditTransactionDialog(tk.Toplevel):
         
         self.category_id_by_display_name = {}
         
-        self.title("Редактировать транзакцию")
-        self.geometry("500x450")
+        self.setWindowTitle("Редактировать транзакцию")
+        self.resize(500, 550)
         
-        center_window_relative(self, parent)
+        self.transaction_id = transaction_data.get('id')
         
-        # self.transient(parent)
-        # self.grab_set()
-        
-        self.transaction_id = transaction_data[0]
-        
-        self._create_ui()
+        self.setup_ui()
         self._load_transaction_data()
         
-        self.wait_window()
-    
-    def _create_ui(self):
-        """Создает интерфейс диалога."""
-        main_frame = ttk.Frame(self, padding="15")
-        main_frame.pack(fill="both", expand=True)
+    def setup_ui(self):
+        """Создает интерфейс диалога"""
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(10)
         
-        ttk.Label(main_frame, text=f"ID транзакции: {self.transaction_id}", 
-                 font=("TkDefaultFont", 9, "italic")).pack(anchor="w", pady=(0, 10))
+        # ID транзакции
+        id_label = QLabel(f"ID транзакции: {self.transaction_id}")
+        id_font = QFont()
+        id_font.setItalic(True)
+        id_label.setFont(id_font)
+        id_label.setAlignment(Qt.AlignLeft)
+        main_layout.addWidget(id_label)
         
-        form_frame = ttk.LabelFrame(main_frame, text="Редактировать данные")
-        form_frame.pack(fill="x", pady=5)
+        # Форма редактирования
+        form_group = QGroupBox("Редактировать данные")
+        form_layout = QFormLayout()
         
-        grid_frame = ttk.Frame(form_frame)
-        grid_frame.pack(fill="x", padx=10, pady=10)
+        # Дата
+        self.date_input = QDateEdit()
+        self.date_input.setCalendarPopup(True)
+        self.date_input.setDisplayFormat("dd.MM.yyyy")
+        form_layout.addRow("Дата:", self.date_input)
         
-        ttk.Label(grid_frame, text="Дата:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.date_entry = TtkDateEntry(grid_frame)
-        self.date_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        # Тип
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["Доход", "Расход", "Корректировка"])
+        self.type_combo.currentTextChanged.connect(self._on_type_change)
+        form_layout.addRow("Тип:", self.type_combo)
         
-        ttk.Label(grid_frame, text="Тип:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.type_var = tk.StringVar()
-        self.type_combo = ttk.Combobox(grid_frame, textvariable=self.type_var, 
-                                      values=["Доход", "Расход", "Корректировка"], 
-                                      state="readonly")
-        self.type_combo.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        self.type_combo.bind("<<ComboboxSelected>>", self._on_type_change)
+        # Сумма
+        self.amount_input = QLineEdit()
+        self.amount_input.setPlaceholderText("0.00")
+        form_layout.addRow("Сумма:", self.amount_input)
         
-        ttk.Label(grid_frame, text="Сумма:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.amount_entry = ttk.Entry(grid_frame)
-        self.amount_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+        # Количество
+        self.quantity_input = QLineEdit()
+        self.quantity_input.setText("1.0")
+        form_layout.addRow("Количество:", self.quantity_input)
         
-        ttk.Label(grid_frame, text="Количество:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
-        self.quantity_entry = ttk.Entry(grid_frame)
-        self.quantity_entry.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
-        self.quantity_entry.insert(0, "1.0")
+        # Категория
+        self.category_combo = QComboBox()
+        form_layout.addRow("Категория:", self.category_combo)
         
-        ttk.Label(grid_frame, text="Категория:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
-        self.category_var = tk.StringVar()
-        self.category_combo = ttk.Combobox(grid_frame, textvariable=self.category_var, state="readonly")
-        self.category_combo.grid(row=4, column=1, padx=5, pady=5, sticky="ew")
+        # Счет
+        self.account_combo = QComboBox()
+        form_layout.addRow("Счет:", self.account_combo)
         
-        ttk.Label(grid_frame, text="Счет:").grid(row=5, column=0, padx=5, pady=5, sticky="w")
-        self.account_var = tk.StringVar()
-        self.account_combo = ttk.Combobox(grid_frame, textvariable=self.account_var, state="readonly")
-        self.account_combo.grid(row=5, column=1, padx=5, pady=5, sticky="ew")
+        # Описание
+        self.description_input = QLineEdit()
+        self.description_input.setPlaceholderText("Описание транзакции")
+        form_layout.addRow("Описание:", self.description_input)
         
-        ttk.Label(grid_frame, text="Описание:").grid(row=6, column=0, padx=5, pady=5, sticky="w")
-        self.description_entry = ttk.Entry(grid_frame)
-        self.description_entry.grid(row=6, column=1, padx=5, pady=5, sticky="ew")
+        form_group.setLayout(form_layout)
+        main_layout.addWidget(form_group)
         
-        grid_frame.grid_columnconfigure(1, weight=1)
+        # Кнопки сохранения/отмены
+        button_layout = QHBoxLayout()
         
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill="x", pady=15)
+        save_button = QPushButton("Сохранить")
+        save_button.clicked.connect(self._save_changes)
+        button_layout.addWidget(save_button)
         
-        ttk.Button(button_frame, text="Сохранить", command=self._save_changes).pack(side="left", padx=5)
-        ttk.Button(button_frame, text="Отмена", command=self.destroy).pack(side="right", padx=5)
+        button_layout.addStretch()
         
-        ttk.Button(main_frame, text="🗑️ Удалить эту транзакцию", 
-                  command=self._delete_transaction,
-                  style="Danger.TButton").pack(pady=10)
+        cancel_button = QPushButton("Отмена")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_button)
         
-        style = ttk.Style()
-        style.configure("Danger.TButton", foreground="white", background="#dc3545")
+        main_layout.addLayout(button_layout)
         
-        info_frame = ttk.LabelFrame(main_frame, text="Дополнительная информация")
-        info_frame.pack(fill="x", pady=10)
+        # Кнопка удаления
+        delete_button = QPushButton("🗑️ Удалить эту транзакцию")
+        delete_button.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                font-weight: bold;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+        """)
+        delete_button.clicked.connect(self._delete_transaction)
+        main_layout.addWidget(delete_button)
         
-        self.info_label = ttk.Label(info_frame, text="", font=("TkDefaultFont", 9))
-        self.info_label.pack(padx=10, pady=10, anchor="w")
+        # Дополнительная информация
+        info_group = QGroupBox("Дополнительная информация")
+        info_layout = QVBoxLayout()
+        
+        self.info_label = QLabel()
+        info_label_font = QFont()
+        info_label_font.setPointSize(9)
+        self.info_label.setFont(info_label_font)
+        self.info_label.setAlignment(Qt.AlignLeft)
+        self.info_label.setWordWrap(True)
+        
+        info_layout.addWidget(self.info_label)
+        info_group.setLayout(info_layout)
+        main_layout.addWidget(info_group)
+        
+        self.setLayout(main_layout)
     
     def _load_transaction_data(self):
-        """Загружает данные транзакции в форму."""
-        trans_id, date, amount, trans_type, category_name, description, account_name, account_id, quantity = self.transaction_data
+        """Загружает данные транзакции в форму"""
+        # Получаем данные из словаря
+        date = self.transaction_data.get('date')
+        amount = self.transaction_data.get('amount', 0.0)
+        trans_type = self.transaction_data.get('type', '')
+        category_name = self.transaction_data.get('category_name', '')
+        description = self.transaction_data.get('description', '')
+        account_name = self.transaction_data.get('account_name', '')
+        account_id = self.transaction_data.get('account_id')
+        quantity = self.transaction_data.get('quantity', 1.0)
         
-        self.date_entry.var.set(date)
+        # Устанавливаем дату
+        try:
+            date_qdate = datetime.strptime(date, "%Y-%m-%d").date()
+            self.date_input.setDate(date_qdate)
+        except (ValueError, TypeError):
+            self.date_input.setDate(datetime.now().date())
         
+        # Устанавливаем тип
         type_mapping = {'income': 'Доход', 'expense': 'Расход', 'корректировка': 'Корректировка'}
-        self.type_var.set(type_mapping.get(trans_type, trans_type.capitalize()))
+        py_type = type_mapping.get(trans_type, trans_type.capitalize())
+        index = self.type_combo.findText(py_type)
+        if index >= 0:
+            self.type_combo.setCurrentIndex(index)
         
+        # Устанавливаем сумму
         display_amount = amount
-        
         if trans_type == 'expense':
             display_amount = -amount
         
-        self.amount_entry.delete(0, tk.END)
-        self.amount_entry.insert(0, f"{display_amount:.2f}")
+        self.amount_input.setText(f"{display_amount:.2f}")
         
-        self.quantity_entry.delete(0, tk.END)
-        self.quantity_entry.insert(0, f"{quantity:.1f}")
+        # Устанавливаем количество
+        self.quantity_input.setText(f"{quantity:.1f}")
         
-        self.description_entry.delete(0, tk.END)
+        # Устанавливаем описание
         if description:
-            self.description_entry.insert(0, description)
+            self.description_input.setText(description)
         
+        # Обновляем комбобоксы
         self._update_category_combo()
         self._update_account_combo()
         
+        # Устанавливаем категорию
         if category_name:
-            self.category_var.set(category_name)
+            # Ищем категорию в отображаемых именах
+            for i in range(self.category_combo.count()):
+                display_name = self.category_combo.itemText(i)
+                # Убираем отступы для сравнения
+                clean_name = display_name.strip()
+                if clean_name == category_name:
+                    self.category_combo.setCurrentIndex(i)
+                    break
         
+        # Устанавливаем счет
         if account_name:
-            self.account_var.set(account_name)
+            index = self.account_combo.findText(account_name)
+            if index >= 0:
+                self.account_combo.setCurrentIndex(index)
         
         self.original_type = trans_type
         self.original_amount = amount
@@ -141,11 +210,11 @@ class EditTransactionDialog(tk.Toplevel):
         self._update_additional_info()
     
     def _update_category_combo(self):
-        """Обновляет список категорий в зависимости от типа."""
-        if not hasattr(self, 'category_id_by_display_name'):
-            self.category_id_by_display_name = {}
+        """Обновляет список категорий в зависимости от типа"""
+        self.category_id_by_display_name.clear()
+        self.category_combo.clear()
         
-        trans_type = self.type_var.get().lower()
+        trans_type = self.type_combo.currentText().lower()
         
         if trans_type == 'доход':
             categories = self.db.get_categories(type='income', include_subcategories=True)
@@ -154,42 +223,66 @@ class EditTransactionDialog(tk.Toplevel):
         else:
             categories = self.db.get_categories(include_subcategories=True)
         
-        display_names = []
-        self.category_id_by_display_name.clear()
-        
         for cat in categories:
+            # Преобразуем кортеж в словарь для удобства
+            if isinstance(cat, tuple):
+                cat_dict = {
+                    'id': cat[0],
+                    'name': cat[1],
+                    'type': cat[2],
+                    'parent_id': cat[4] if len(cat) > 4 else None
+                }
+            else:
+                cat_dict = cat
+            
             level = 0
-            parent_id = cat[4]
+            parent_id = cat_dict.get('parent_id')
+            
+            # Определяем уровень вложенности
             while parent_id:
                 level += 1
+                parent_found = False
                 for c in categories:
-                    if c[0] == parent_id:
-                        parent_id = c[4]
+                    c_id = c[0] if isinstance(c, tuple) else c.get('id')
+                    if c_id == parent_id:
+                        parent_id = c[4] if isinstance(c, tuple) else c.get('parent_id')
+                        parent_found = True
                         break
-                else:
+                if not parent_found:
                     break
             
             indent = "    " * level
-            display_name = f"{indent}{cat[1]}"
-            display_names.append(display_name)
-            
-            self.category_id_by_display_name[display_name] = cat[0]
-        
-        self.category_combo['values'] = display_names
+            display_name = f"{indent}{cat_dict['name']}"
+            self.category_combo.addItem(display_name)
+            self.category_id_by_display_name[display_name] = cat_dict['id']
     
     def _update_account_combo(self):
-        """Обновляет список счетов."""
+        """Обновляет список счетов"""
+        self.account_combo.clear()
+        
         accounts = self.db.get_accounts()
-        account_names = [acc[1] for acc in accounts]
-        self.account_combo['values'] = account_names
+        for account in accounts:
+            if isinstance(account, tuple):
+                account_id = account[0]
+                account_name = account[1]
+            else:
+                account_id = account.get('id')
+                account_name = account.get('name')
+            
+            self.account_combo.addItem(account_name, account_id)
     
-    def _on_type_change(self, event=None):
-        """Обновляет список категорий при изменении типа."""
+    def _on_type_change(self, text):
+        """Обновляет список категорий при изменении типа"""
         self._update_category_combo()
     
     def _update_additional_info(self):
-        """Обновляет дополнительную информацию."""
-        trans_id, date, amount, trans_type, category_name, description, account_name, account_id, quantity = self.transaction_data
+        """Обновляет дополнительную информацию"""
+        date = self.transaction_data.get('date')
+        amount = self.transaction_data.get('amount', 0.0)
+        trans_type = self.transaction_data.get('type', '')
+        category_name = self.transaction_data.get('category_name', '')
+        account_name = self.transaction_data.get('account_name', '')
+        quantity = self.transaction_data.get('quantity', 1.0)
         
         ui_amount = amount
         if trans_type == 'expense':
@@ -211,127 +304,145 @@ class EditTransactionDialog(tk.Toplevel):
         info_text += f"• Счет: {account_name}\n"
         info_text += f"• Категория: {category_name}"
         
-        self.info_label.config(text=info_text)
+        self.info_label.setText(info_text)
     
     def _save_changes(self):
-        """Сохраняет изменения транзакции."""
+        """Сохраняет изменения транзакции"""
         try:
-            date_str = self.date_entry.get_date()
-            if not date_str:
-                messagebox.showerror("Ошибка", "Введите дату.", parent=self)
+            # Проверяем дату
+            date_qdate = self.date_input.date()
+            date_str = date_qdate.toString("yyyy-MM-dd")
+            
+            if not date_qdate.isValid():
+                QMessageBox.critical(self, "Ошибка", "Введите корректную дату.")
                 return
             
+            # Определяем тип транзакции
             type_mapping = {
-                'Доход': 'доход',
-                'Расход': 'расход', 
+                'Доход': 'income',
+                'Расход': 'expense', 
                 'Корректировка': 'корректировка'
             }
-            trans_type = type_mapping.get(self.type_var.get(), self.type_var.get().lower())
+            trans_type = type_mapping.get(self.type_combo.currentText(), self.type_combo.currentText().lower())
             
-            amount_str = self.amount_entry.get().strip().replace(',', '.')
+            # Проверяем сумму
+            amount_str = self.amount_input.text().strip().replace(',', '.')
             try:
                 ui_amount = float(amount_str)
             except ValueError:
-                messagebox.showerror("Ошибка", "Некорректная сумма.", parent=self)
+                QMessageBox.critical(self, "Ошибка", "Некорректная сумма.")
                 return
             
-            if trans_type == 'расход':
+            if trans_type == 'expense':
                 db_amount = -ui_amount
             else:
                 db_amount = ui_amount
             
-            quantity_str = self.quantity_entry.get().strip().replace(',', '.')
+            # Проверяем количество
+            quantity_str = self.quantity_input.text().strip().replace(',', '.')
             try:
                 quantity = float(quantity_str)
                 if quantity <= 0:
                     raise ValueError("Количество должно быть положительным.")
             except ValueError as e:
-                messagebox.showerror("Ошибка", f"Некорректное количество: {e}", parent=self)
+                QMessageBox.critical(self, "Ошибка", f"Некорректное количество: {e}")
                 return
             
-            category_display = self.category_var.get()
+            # Проверяем категорию
+            category_display = self.category_combo.currentText()
             if not category_display:
-                messagebox.showerror("Ошибка", "Выберите категорию.", parent=self)
+                QMessageBox.critical(self, "Ошибка", "Выберите категорию.")
                 return
-            
-            category_name = category_display.strip()
             
             category_id = self.category_id_by_display_name.get(category_display)
             
             if category_id is None:
+                # Ищем категорию по имени (без отступов)
+                category_name = category_display.strip()
                 for cat in self.db.get_categories():
-                    if cat[1] == category_name:
-                        category_id = cat[0]
+                    if isinstance(cat, dict):
+                        cat_name = cat.get('name')
+                        cat_id = cat.get('id')
+                    else:
+                        cat_name = cat[1] if len(cat) > 1 else ''
+                        cat_id = cat[0]
+                    
+                    if cat_name == category_name:
+                        category_id = cat_id
                         break
             
             if category_id is None:
-                messagebox.showerror("Ошибка", "Категория не найдена.", parent=self)
+                QMessageBox.critical(self, "Ошибка", "Категория не найдена.")
                 return
             
-            account_name = self.account_var.get()
-            if not account_name:
-                messagebox.showerror("Ошибка", "Выберите счет.", parent=self)
-                return
-            
-            account_id = None
-            for acc in self.db.get_accounts():
-                if acc[1] == account_name:
-                    account_id = acc[0]
-                    break
-            
+            # Проверяем счет
+            account_id = self.account_combo.currentData()
             if not account_id:
-                messagebox.showerror("Ошибка", "Счет не найден.", parent=self)
+                QMessageBox.critical(self, "Ошибка", "Выберите счет.")
                 return
             
-            description = self.description_entry.get().strip()
+            # Получаем описание
+            description = self.description_input.text().strip()
             
+            # Формируем словарь с данными для обновления
+            transaction_data = {
+                'date': date_str,
+                'amount': db_amount,
+                'type': trans_type,
+                'category_id': category_id,
+                'description': description,
+                'account_id': account_id,
+                'quantity': quantity
+            }
+            
+            # Удаляем пустые значения (если метод ожидает только заполненные поля)
+            transaction_data = {k: v for k, v in transaction_data.items() if v is not None}
+            
+            # Обновляем транзакцию в БД
             if self.db.update_transaction(
                 transaction_id=self.transaction_id,
-                date=date_str,
-                amount=db_amount,
-                trans_type=trans_type,
-                category_id=category_id,
-                description=description,
-                account_id=account_id,
-                quantity=quantity
+                transaction_data=transaction_data
             ):
-                if trans_type == 'расход':
+                # Формируем сообщение об успехе
+                if trans_type == 'expense':
                     if ui_amount > 0:
                         msg = f"✅ Расход обновлен: {ui_amount:.2f} ₽"
                     else:
                         msg = f"✅ Возврат покупки обновлен: {abs(ui_amount):.2f} ₽"
-                elif trans_type == 'доход':
+                elif trans_type == 'income':
                     msg = f"✅ Доход обновлен: {db_amount:.2f} ₽"
                 else:
                     msg = f"✅ Корректировка обновлена: {db_amount:.2f} ₽"
                 
-                messagebox.showinfo("Успех", msg, parent=self)
+                QMessageBox.information(self, "Успех", msg)
                 
-                if hasattr(self.parent, '_post_dialog_update'):
-                    self.parent._post_dialog_update()
+                # Сигнализируем об обновлении данных
+                self.data_updated.emit()
                 
-                self.destroy()
+                self.accept()
             else:
-                messagebox.showerror("Ошибка", "Не удалось обновить транзакцию.", parent=self)
+                QMessageBox.critical(self, "Ошибка", "Не удалось обновить транзакцию.")
                 
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Произошла ошибка: {e}", parent=self)
+            QMessageBox.critical(self, "Ошибка", f"Произошла ошибка: {str(e)}")
             print(f"DEBUG: Error saving transaction: {e}")
-    
+            
     def _delete_transaction(self):
-        """Удаляет текущую транзакцию."""
-        if messagebox.askyesno(
-            "Подтверждение удаления",
+        """Удаляет текущую транзакцию"""
+        reply = QMessageBox.question(
+            self, "Подтверждение удаления",
             f"Вы уверены, что хотите удалить эту транзакцию (ID: {self.transaction_id})?\n\n"
             f"Эта операция необратима.",
-            parent=self
-        ):
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
             if self.db.delete_transaction(self.transaction_id):
-                messagebox.showinfo("Успех", "Транзакция удалена.", parent=self)
+                QMessageBox.information(self, "Успех", "Транзакция удалена.")
                 
-                if hasattr(self.parent, '_post_dialog_update'):
-                    self.parent._post_dialog_update()
+                # Сигнализируем об обновлении данных
+                self.data_updated.emit()
                 
-                self.destroy()
+                self.accept()
             else:
-                messagebox.showerror("Ошибка", "Не удалось удалить транзакцию.", parent=self)
+                QMessageBox.critical(self, "Ошибка", "Не удалось удалить транзакцию.")

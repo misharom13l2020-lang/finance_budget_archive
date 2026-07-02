@@ -1,0 +1,170 @@
+/* ui/styles/tables.qss - стили для таблиц и деревьев */
+
+/* QTreeWidget */
+QTreeWidget {
+    background-color: white;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-small);
+    alternate-background-color: #f8f9fa;
+    font-size: 11px;
+    outline: none;
+}
+
+QTreeWidget::item {
+    padding: 2px;
+    min-height: 22px;
+    border-bottom: 1px solid transparent;
+}
+
+QTreeWidget::item:hover {
+    background-color: #e3f2fd; /* светло-голубое выделение */
+}
+
+QTreeWidget::item:selected {
+    background-color: #e3f2fd;
+    color: black;
+    border-bottom: 1px solid #bbdefb;
+}
+
+QTreeWidget::item:selected:active {
+    background-color: #bbdefb;
+}
+
+/* Ветвления дерева (для иерархических структур) */
+QTreeWidget::branch:has-siblings:!adjoins-item {
+    border-image: url(./images/vline.png) 0;
+}
+
+QTreeWidget::branch:has-siblings:adjoins-item {
+    border-image: url(./images/branch-more.png) 0;
+}
+
+QTreeWidget::branch:!has-children:!has-siblings:adjoins-item {
+    border-image: url(./images/branch-end.png) 0;
+}
+
+QTreeWidget::branch:has-children:!has-siblings:closed,
+QTreeWidget::branch:closed:has-children:has-siblings {
+    border-image: url(./images/branch-closed.png) 0;
+}
+
+QTreeWidget::branch:open:has-children:!has-siblings,
+QTreeWidget::branch:open:has-children:has-siblings  {
+    border-image: url(./images/branch-open.png) 0;
+}
+
+/* QHeaderView (заголовки таблиц) */
+QHeaderView::section {
+    background-color: #f1f3f4;
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-left: none;
+    border-right: none;
+    font-weight: bold;
+    font-size: 11px;
+}
+
+QHeaderView::section:first {
+    border-left: 1px solid var(--border-color);
+}
+
+QHeaderView::section:last {
+    border-right: 1px solid var(--border-color);
+}
+
+QHeaderView::section:hover {
+    background-color: #e9ecef;
+}
+
+QHeaderView::section:pressed {
+    background-color: #dee2e6;
+}
+
+/* QTableView */
+QTableView {
+    background-color: white;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-small);
+    alternate-background-color: #f8f9fa;
+    gridline-color: #e9ecef;
+    font-size: 11px;
+}
+
+QTableView::item {
+    padding: 2px;
+    border: none;
+}
+
+QTableView::item:selected {
+    background-color: #e3f2fd;
+    color: black;
+}
+
+QTableView::item:hover {
+    background-color: #e3f2fd; /* светло-голубое выделение */
+}
+
+/* QTableWidget */
+QTableWidget {
+    background-color: white;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-small);
+    alternate-background-color: #f8f9fa;
+    gridline-color: #e9ecef;
+    font-size: 11px;
+}
+
+QTableWidget::item {
+    padding: 2px;
+    border: none;
+}
+
+QTableWidget::item:selected {
+    background-color: #e3f2fd;
+    color: black;
+}
+
+QTableWidget::item:hover {
+    background-color: #e3f2fd; /* светло-голубое выделение */
+}
+
+/* Полосы прокрутки */
+QScrollBar:vertical {
+    border: none;
+    background-color: #f8f9fa;
+    width: 10px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #ced4da;
+    border-radius: 5px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #adb5bd;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    border: none;
+    background: none;
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    border: none;
+    background-color: #f8f9fa;
+    height: 10px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #ced4da;
+    border-radius: 5px;
+    min-width: 20px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #adb5bd;
+}

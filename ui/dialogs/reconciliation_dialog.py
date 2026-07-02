@@ -1,177 +1,241 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
+# ui/dialogs/reconciliation_dialog.py
+"""
+Диалог для массовой сверки балансов всех счетов
+Переведено на PySide6 с сохранением функциональности Tkinter версии
+"""
+
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QScrollArea, QWidget, QFrame, QMessageBox, QGridLayout
+)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont, QPalette, QColor
 from datetime import datetime
 
 from core.database import DatabaseManager
 from ui.widgets.window_utils import center_window_relative
-from ui.widgets.calendar_widgets import TtkDateEntry  # если используете
 
 
-class ReconciliationDialog(tk.Toplevel):
-    """Диалог для массовой сверки балансов всех счетов."""
+class ReconciliationDialog(QDialog):
+    """Диалог для массовой сверки балансов всех счетов"""
     
-    def __init__(self, parent, db_manager, accounts_data):
+    data_updated = Signal()
+    
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
-        self.db = db_manager
-        self.accounts_data = accounts_data
+        self.db = DatabaseManager.get_instance()
+        
         self.account_entries = {}
         self.calculated_balances = {}
         self.difference_labels = {}
         self.total_difference_label = None
+        self.result = False
         
-        self.title("Сверка Балансов")
-        self.geometry("650x500")
+        self.setup_ui()
         
-        center_window_relative(self, self.parent)
+    def setup_ui(self):
+        """Создание интерфейса диалога"""
+        self.setWindowTitle("Сверка Балансов")
+        self.resize(650, 550)
         
-        self.transient(parent)
-        self.grab_set()
+        # center_window_relative(self, parent)
         
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        if self.parent:
+            center_window_relative(self, self.parent)
         
-        self._create_ui()
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(10)
         
-        self.wait_window()
-    
-    def _create_ui(self):
-        """Создание интерфейса диалога."""
-        instruction_label = ttk.Label(self, 
-            text="Введите фактические балансы для всех счетов:",
-            font=("TkDefaultFont", 10), justify="center")
-        instruction_label.pack(pady=10)
-
-        table_frame = ttk.Frame(self)
-        table_frame.pack(fill="both", expand=True, padx=10, pady=5)
-
-        header_frame = ttk.Frame(table_frame)
-        header_frame.pack(fill="x")
+        # Инструкция
+        instruction_label = QLabel("Введите фактические балансы для всех счетов:")
+        instruction_font = QFont()
+        instruction_font.setPointSize(10)
+        instruction_label.setFont(instruction_font)
+        instruction_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(instruction_label)
         
-        ttk.Label(header_frame, text="Счет", font=("TkDefaultFont", 10, "bold"), width=25).pack(side="left", padx=5, pady=2)
-        ttk.Label(header_frame, text="Расчетный", font=("TkDefaultFont", 10, "bold"), width=12).pack(side="left", padx=5, pady=2)
-        ttk.Label(header_frame, text="Фактический", font=("TkDefaultFont", 10, "bold"), width=12).pack(side="left", padx=5, pady=2)
-        ttk.Label(header_frame, text="Разница", font=("TkDefaultFont", 10, "bold"), width=12).pack(side="left", padx=5, pady=2)
-
-        ttk.Separator(table_frame, orient="horizontal").pack(fill="x", pady=2)
-
-        canvas = tk.Canvas(table_frame, height=300)
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=canvas.yview)
-        self.scrollable_frame = ttk.Frame(canvas)
-
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
+        # Заголовки таблицы
+        header_widget = QWidget()
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(10)
+        
+        labels = ["Счет", "Расчетный", "Фактический", "Разница"]
+        widths = [200, 100, 100, 100]
+        
+        for label, width in zip(labels, widths):
+            header_label = QLabel(label)
+            header_font = QFont()
+            header_font.setBold(True)
+            header_label.setFont(header_font)
+            header_label.setMinimumWidth(width)
+            header_layout.addWidget(header_label)
+        
+        header_widget.setLayout(header_layout)
+        main_layout.addWidget(header_widget)
+        
+        # Разделитель
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        main_layout.addWidget(separator)
+        
+        # Область прокрутки для счетов
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        self.accounts_widget = QWidget()
+        self.accounts_layout = QVBoxLayout()
+        self.accounts_layout.setSpacing(5)
+        self.accounts_widget.setLayout(self.accounts_layout)
+        
+        scroll_area.setWidget(self.accounts_widget)
+        main_layout.addWidget(scroll_area, 1)
+        
+        # Создаем таблицу счетов
         self._create_accounts_table()
-
-        self.total_difference_label = ttk.Label(self, text="Общая разница: 0.00 ₽", 
-                                               font=("TkDefaultFont", 11, "bold"))
-        self.total_difference_label.pack(pady=5)
-
-        button_frame = ttk.Frame(self)
-        button_frame.pack(fill="x", pady=10)
-
-        self.reconcile_button = ttk.Button(button_frame, text="Выполнить сверку", 
-                                          command=self._perform_reconciliation,
-                                          state="disabled")
-        self.reconcile_button.pack(side="left", padx=5)
-
-        ttk.Button(button_frame, text="Отмена", command=self.on_close).pack(side="right", padx=5)
-    
-    def on_close(self):
-        """Закрывает диалоговое окно."""
-        self.grab_release()
-        self.destroy()
-
+        
+        # Общая разница
+        self.total_difference_label = QLabel("Общая разница: 0.00 ₽")
+        total_font = QFont()
+        total_font.setBold(True)
+        total_font.setPointSize(11)
+        self.total_difference_label.setFont(total_font)
+        self.total_difference_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(self.total_difference_label)
+        
+        # Кнопки
+        button_layout = QHBoxLayout()
+        
+        self.reconcile_button = QPushButton("Выполнить сверку")
+        self.reconcile_button.setEnabled(False)
+        self.reconcile_button.clicked.connect(self._perform_reconciliation)
+        button_layout.addWidget(self.reconcile_button)
+        
+        button_layout.addStretch()
+        
+        cancel_button = QPushButton("Отмена")
+        cancel_button.clicked.connect(self.on_close)
+        button_layout.addWidget(cancel_button)
+        
+        main_layout.addLayout(button_layout)
+        
+        self.setLayout(main_layout)
+        
     def _create_accounts_table(self):
-        """Создает таблицу с полями ввода для каждого счета."""
-        for widget in self.scrollable_frame.winfo_children():
-            widget.destroy()
-
+        """Создает таблицу с полями ввода для каждого счета"""
+        # Очищаем существующие виджеты
+        while self.accounts_layout.count():
+            item = self.accounts_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
         self.account_entries = {}
         self.calculated_balances = {}
         self.difference_labels = {}
-
-        sorted_accounts = sorted(self.accounts_data.items(), 
-                               key=lambda x: x[1]['name'])
-
-        for account_id, acc_info in sorted_accounts:
-            row_frame = ttk.Frame(self.scrollable_frame)
-            row_frame.pack(fill="x", pady=2)
-
-            account_label = ttk.Label(row_frame, text=acc_info['name'], width=25)
-            account_label.pack(side="left", padx=5)
-
-            calculated_balance = acc_info['balance']
+        
+        # Получаем счета из БД
+        accounts = self.db.get_accounts(active_only=True, include_system=False)
+        
+        # Сортируем счета по имени
+        sorted_accounts = sorted(accounts, key=lambda x: x['name'])
+        
+        for acc in sorted_accounts:
+            row_widget = QWidget()
+            row_layout = QHBoxLayout()
+            row_layout.setSpacing(10)
+            
+            # Название счета
+            account_label = QLabel(acc['name'])
+            account_label.setMinimumWidth(200)
+            row_layout.addWidget(account_label)
+            
+            # Расчетный баланс
+            calculated_balance = acc['current_balance']
+            account_id = acc['id']
             self.calculated_balances[account_id] = calculated_balance
-            calc_label = ttk.Label(row_frame, text=f"{calculated_balance:.2f} ₽", 
-                                  width=12)
-            calc_label.pack(side="left", padx=5)
-
-            actual_var = tk.StringVar(value=f"{calculated_balance:.2f}")
-            actual_entry = ttk.Entry(row_frame, textvariable=actual_var, width=12)
-            actual_entry.pack(side="left", padx=5)
             
-            actual_entry.bind('<KeyRelease>', lambda event, acc_id=account_id: self._on_balance_change(acc_id))
-            actual_entry.bind('<FocusOut>', lambda event, acc_id=account_id: self._on_balance_change(acc_id))
+            calc_label = QLabel(f"{calculated_balance:.2f} ₽")
+            calc_label.setMinimumWidth(100)
+            calc_label.setAlignment(Qt.AlignRight)
+            row_layout.addWidget(calc_label)
             
-            diff_label = ttk.Label(row_frame, text="0.00 ₽", width=12, foreground="black")
-            diff_label.pack(side="left", padx=5)
-
-            self.account_entries[account_id] = actual_entry
+            # Поле для фактического баланса
+            actual_input = QLineEdit()
+            actual_input.setMinimumWidth(100)
+            actual_input.setText(f"{calculated_balance:.2f}")
+            actual_input.textChanged.connect(
+                lambda text, acc_id=account_id: self._on_balance_change(acc_id)
+            )
+            row_layout.addWidget(actual_input)
+            
+            # Разница
+            diff_label = QLabel("0.00 ₽")
+            diff_label.setMinimumWidth(100)
+            diff_label.setAlignment(Qt.AlignRight)
+            row_layout.addWidget(diff_label)
+            
+            self.account_entries[account_id] = actual_input
             self.difference_labels[account_id] = diff_label
-
+            
+            row_widget.setLayout(row_layout)
+            self.accounts_layout.addWidget(row_widget)
+        
+        # Добавляем растягивающий элемент
+        self.accounts_layout.addStretch()
+        
     def _on_balance_change(self, account_id):
-        """Обрабатывает изменение баланса."""
-        self.after(50, lambda: self._update_balance(account_id))
-
+        """Обрабатывает изменение баланса"""
+        self._update_balance(account_id)
+        
     def _update_balance(self, account_id):
-        """Обновляет разницу для конкретного счета."""
+        """Обновляет разницу для конкретного счета"""
         try:
-            actual_text = self.account_entries[account_id].get().replace(',', '.').strip()
-            print(f"DEBUG: Account {account_id} - Input: '{actual_text}'")
+            actual_text = self.account_entries[account_id].text().replace(',', '.').strip()
             
             if actual_text:
                 actual_balance = float(actual_text)
                 calculated_balance = self.calculated_balances[account_id]
                 difference = actual_balance - calculated_balance
                 
-                print(f"DEBUG: Account {account_id} - Actual: {actual_balance}, Calculated: {calculated_balance}, Diff: {difference}")
-                
                 diff_text = f"{difference:+.2f} ₽"
-                if difference > 0:
-                    self.difference_labels[account_id].config(text=diff_text, foreground="green")
-                elif difference < 0:
-                    self.difference_labels[account_id].config(text=diff_text, foreground="red")
-                else:
-                    self.difference_labels[account_id].config(text=diff_text, foreground="black")
-            else:
-                self.difference_labels[account_id].config(text="0.00 ₽", foreground="black")
+                diff_label = self.difference_labels[account_id]
+                diff_label.setText(diff_text)
                 
-        except (ValueError, TypeError) as e:
-            print(f"DEBUG: Error processing account {account_id}: {e}")
-            self.difference_labels[account_id].config(text="Ошибка", foreground="orange")
-
-        self._update_total_difference()
-
-    def _update_total_difference(self):
-        """Обновляет общую разницу и состояние кнопки."""
-        if not hasattr(self, 'total_difference_label') or not self.total_difference_label:
-            return
+                # Устанавливаем цвет в зависимости от разницы
+                palette = diff_label.palette()
+                if difference > 0:
+                    palette.setColor(QPalette.WindowText, QColor("green"))
+                elif difference < 0:
+                    palette.setColor(QPalette.WindowText, QColor("red"))
+                else:
+                    palette.setColor(QPalette.WindowText, QColor("black"))
+                diff_label.setPalette(palette)
+                
+            else:
+                self.difference_labels[account_id].setText("0.00 ₽")
+                palette = self.difference_labels[account_id].palette()
+                palette.setColor(QPalette.WindowText, QColor("black"))
+                self.difference_labels[account_id].setPalette(palette)
+                
+        except (ValueError, TypeError):
+            self.difference_labels[account_id].setText("Ошибка")
+            palette = self.difference_labels[account_id].palette()
+            palette.setColor(QPalette.WindowText, QColor("orange"))
+            self.difference_labels[account_id].setPalette(palette)
         
+        self._update_total_difference()
+        
+    def _update_total_difference(self):
+        """Обновляет общую разницу и состояние кнопки"""
         total_diff = 0.0
         has_changes = False
         
         for account_id in self.account_entries:
             try:
-                actual_text = self.account_entries[account_id].get().replace(',', '.').strip()
+                actual_text = self.account_entries[account_id].text().replace(',', '.').strip()
                 if not actual_text:
                     continue
                     
@@ -183,31 +247,34 @@ class ReconciliationDialog(tk.Toplevel):
                 
                 if difference != 0:
                     has_changes = True
-                    print(f"DEBUG: Found change in account {account_id}: {difference}")
                     
             except (ValueError, TypeError):
                 has_changes = True
-
-        print(f"DEBUG: Total difference: {total_diff}, Has changes: {has_changes}")
-
+        
+        # Обновляем текст общей разницы
         total_text = f"Общая разница: {total_diff:+.2f} ₽"
+        self.total_difference_label.setText(total_text)
+        
+        # Устанавливаем цвет общей разницы
+        palette = self.total_difference_label.palette()
         if total_diff > 0:
-            self.total_difference_label.config(text=total_text, foreground="green")
+            palette.setColor(QPalette.WindowText, QColor("green"))
         elif total_diff < 0:
-            self.total_difference_label.config(text=total_text, foreground="red")
+            palette.setColor(QPalette.WindowText, QColor("red"))
         else:
-            self.total_difference_label.config(text=total_text, foreground="black")
-
-        self.reconcile_button.config(state="normal" if has_changes else "disabled")
-        print(f"DEBUG: Button state: {'normal' if has_changes else 'disabled'}")
-
+            palette.setColor(QPalette.WindowText, QColor("black"))
+        self.total_difference_label.setPalette(palette)
+        
+        # Обновляем состояние кнопки
+        self.reconcile_button.setEnabled(has_changes)
+        
     def _perform_reconciliation(self):
-        """Выполняет сверку для всех счетов с изменениями."""
+        """Выполняет сверку для всех счетов с изменениями"""
         reconciliations = []
         
         for account_id in self.account_entries:
             try:
-                actual_text = self.account_entries[account_id].get().replace(',', '.').strip()
+                actual_text = self.account_entries[account_id].text().replace(',', '.').strip()
                 if not actual_text:
                     continue
                     
@@ -218,87 +285,61 @@ class ReconciliationDialog(tk.Toplevel):
                 if difference == 0:
                     continue
                 
-                if self._create_reconciliation_transaction(account_id, difference):
-                    account_name = self.accounts_data[account_id]['name']
+                # Получаем информацию о счете для логирования
+                account_info = self.db.get_account_by_id(account_id)
+                account_name = account_info['name'] if account_info else f"ID: {account_id}"
+                
+                # Создаем корректирующую транзакцию
+                if self._create_reconciliation_transaction(account_id, difference, account_name):
                     reconciliations.append({
                         'account': account_name,
                         'difference': difference
                     })
-                    print(f"DEBUG: Reconciled account {account_name}: diff = {difference:.2f}")
                     
             except (ValueError, TypeError) as e:
-                print(f"DEBUG: Error reconciling account {account_id}: {e}")
+                self.logger.error(f"Ошибка при обработке счета {account_id}: {e}")
                 continue
-
+        
         if reconciliations:
+            # Формируем текст результата
             result_text = "Сверка выполнена для счетов:\n\n"
             for rec in reconciliations:
                 sign = "+" if rec['difference'] > 0 else ""
                 result_text += f"• {rec['account']}: {sign}{rec['difference']:.2f} ₽\n"
             
             result_text += f"\nВсего обработано: {len(reconciliations)} счетов"
-            messagebox.showinfo("Сверка завершена", result_text, parent=self)
+            
+            QMessageBox.information(self, "Сверка завершена", result_text)
             self.result = True
             
-            if hasattr(self.master, '_post_dialog_update'):
-                self.master._post_dialog_update()
+            # Сигнализируем об обновлении данных
+            self.data_updated.emit()
+            
+            # Закрываем диалог
+            self.accept()
                 
         else:
-            messagebox.showinfo("Сверка", "Нет изменений для сверки", parent=self)
+            QMessageBox.information(self, "Сверка", "Нет изменений для сверки")
             self.result = False
-
-    def _create_reconciliation_transaction(self, account_id, difference):
-        """Создает корректирующую операцию для сверки баланса."""
+            self.reject()
+            
+    def _create_reconciliation_transaction(self, account_id, difference, account_name):
+        """Создает корректирующую операцию для сверки баланса"""
         try:
-            reconcile_category = self.db.get_category_by_name("Сверка Баланса")
-            if not reconcile_category:
-                print("ERROR: Reconciliation category not found")
-                return False
-                
-            category_id = reconcile_category[0]
-            
-            today = datetime.now().strftime('%Y-%m-%d')
-            trans_type = "корректировка"
-            amount = difference
-            
-            description = f"Корректировка баланса. Разница: {difference:+.2f} ₽"
-            
-            result = self._add_correction_transaction(
-                today, amount, category_id, description, account_id
+            # Используем метод reconcile_account из DatabaseManager
+            transaction_id = self.db.reconcile_account(
+                account_id=account_id,
+                actual_balance=float(self.account_entries[account_id].text().replace(',', '.')),
+                description=f"Сверка баланса: {account_name}"
             )
             
-            if result:
-                print(f"DEBUG: Successfully created reconciliation transaction for account {account_id}, difference: {difference:.2f}")
-            else:
-                print(f"DEBUG: Failed to add reconciliation transaction for account {account_id}")
-                
-            return result
+            return transaction_id > 0
             
         except Exception as e:
             print(f"Error in _create_reconciliation_transaction: {e}")
             return False
-
-    def _add_correction_transaction(self, date, amount, category_id, description, account_id):
-        """Добавляет корректирующую транзакцию."""
-        try:
-            amount = float(amount)
             
-            print(f"DEBUG: Adding CORRECTION transaction: Date={date}, Amount={amount}, CatID={category_id}, Desc={description}, AccID={account_id}")
-            
-            result = self.db.add_transaction(
-                date, amount, "корректировка", category_id, description, account_id
-            )
-            
-            return result
-            
-        except Exception as e:
-            print(f"Error in _add_correction_transaction: {e}")
-            return False
-
-    def apply(self):
-        """Вызывается при нажатии OK - ничего не делаем, т.к. сверка уже выполнена."""
-        pass
-
-    def buttonbox(self):
-        """Переопределяем кнопки - убираем стандартные OK/Cancel."""
-        pass
+    def on_close(self):
+        """Закрывает диалоговое окно"""
+        self.data_updated.emit()
+        self.reject()

@@ -1,471 +1,701 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
-from datetime import datetime, date
+# ui/dialogs/transfer_dialog.py
+"""
+Диалог управления переводами между счетами
+Переведено на PySide6 с улучшениями и адаптацией под словари БД
+"""
+
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QComboBox, QRadioButton, QButtonGroup, QGroupBox, QTabWidget,
+    QTreeWidget, QTreeWidgetItem, QDateEdit, QMessageBox, QHeaderView,
+    QWidget, QFormLayout, QScrollArea, QMenu, QCompleter
+)
+from PySide6.QtCore import Qt, Signal, QDate, QStringListModel
+from PySide6.QtGui import QFont
 
 from core.database import DatabaseManager
 from ui.widgets.window_utils import center_window_relative
-from ui.widgets.calendar_widgets import TtkDateEntry  # если используете
 
-class TransferDialog(tk.Toplevel):
-    def __init__(self, parent, db_manager, accounts_data):
+
+class TransferDialog(QDialog):
+    """Диалог для управления переводами между счетами"""
+    
+    data_updated = Signal()
+    
+    def __init__(self, parent=None, db_manager=None, accounts_data=None):
         super().__init__(parent)
         self.parent = parent
-        self.db = db_manager
-        self.accounts_data = accounts_data
-        self.current_account_id = None
-        self.last_selected_date = getattr(parent, 'last_selected_date', date.today().strftime('%Y-%m-%d'))
+        self.db = db_manager or DatabaseManager.get_instance()
+        self.accounts_data = accounts_data or {}
         
+        # Инициализация переменных
+        self.current_account_id = None
+        self.last_selected_date = QDate.currentDate()
+        
+        # Фильтры
         self.current_filters = {
             "account_id": None,
             "counterparty": None,
             "date_from": None,
             "date_to": None
         }
-                
-        self.title("Управление Переводами")
-        self.geometry("950x500")
         
-        center_window_relative(self, self.parent)
+        # Модель для автодополнения контрагентов
+        self.counterparty_model = QStringListModel()
+        self.counterparty_completer = None
         
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
-        self._create_ui()
-        
-    def _create_ui(self):
-        """Создание всех виджетов диалога."""
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        add_frame = ttk.Frame(notebook)
-        notebook.add(add_frame, text="Добавить перевод")
-        self._create_add_transfer_tab(add_frame)
-        
-        view_frame = ttk.Frame(notebook)
-        notebook.add(view_frame, text="Все переводы")
-        self._create_view_transfers_tab(view_frame)
-
-    def _create_add_transfer_tab(self, master):
-        """Создает вкладку для добавления переводов"""
-        self.transfer_type = tk.StringVar(value="internal")
-        
-        type_frame = ttk.LabelFrame(master, text="Тип перевода")
-        type_frame.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
-        
-        ttk.Radiobutton(type_frame, text="Между моими счетами", 
-                       variable=self.transfer_type, value="internal",
-                       command=self._update_transfer_type).pack(side="left", padx=10)
-        ttk.Radiobutton(type_frame, text="Внешний перевод", 
-                       variable=self.transfer_type, value="external",
-                       command=self._update_transfer_type).pack(side="left", padx=10)
-
-        ttk.Label(master, text="Дата:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.date_input = TtkDateEntry(master)
-        self.date_input.var.set(self.last_selected_date)
-        self.date_input.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        
-        ttk.Label(master, text="Сумма:").grid(row=2, column=0, padx=5, pady=2, sticky="w")
-        self.amount_input = ttk.Entry(master)
-        self.amount_input.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
-        
-        self.internal_frame = ttk.Frame(master)
-        self.internal_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=2, sticky="ew")
-        
-        ttk.Label(self.internal_frame, text="Со счета:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
-        self.from_account_var = tk.StringVar(master)
-        self.from_account_combo = ttk.Combobox(self.internal_frame, textvariable=self.from_account_var, state="readonly")
-        self.from_account_combo.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
-        
-        ttk.Label(self.internal_frame, text="На счет:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
-        self.to_account_var = tk.StringVar(master)
-        self.to_account_combo = ttk.Combobox(self.internal_frame, textvariable=self.to_account_var, state="readonly")
-        self.to_account_combo.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        
-        self.external_frame = ttk.Frame(master)
-        self.external_frame.grid(row=3, column=0, columnspan=2, padx=5, pady=2, sticky="ew")
-        
-        ttk.Label(self.external_frame, text="Направление:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
-        self.direction_var = tk.StringVar(value="incoming")
-        direction_frame = ttk.Frame(self.external_frame)
-        direction_frame.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
-        ttk.Radiobutton(direction_frame, text="Мне перевели", 
-                       variable=self.direction_var, value="incoming").pack(side="left")
-        ttk.Radiobutton(direction_frame, text="Я перевел", 
-                       variable=self.direction_var, value="outgoing").pack(side="left")
-        
-        ttk.Label(self.external_frame, text="Счет:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
-        self.external_account_var = tk.StringVar(master)
-        self.external_account_combo = ttk.Combobox(self.external_frame, textvariable=self.external_account_var, state="readonly")
-        self.external_account_combo.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        
-        ttk.Label(self.external_frame, text="Контрагент:").grid(row=2, column=0, padx=5, pady=2, sticky="w")
-        self.counterparty_input = ttk.Entry(self.external_frame)
-        self.counterparty_input.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
-
-        ttk.Label(master, text="Описание:").grid(row=4, column=0, padx=5, pady=2, sticky="w")
-        self.description_input = ttk.Entry(master)
-        self.description_input.grid(row=4, column=1, padx=5, pady=2, sticky="ew")
-
-        account_names = [acc_info['name'] for acc_id, acc_info in self.accounts_data.items()]
-        self.from_account_combo['values'] = account_names
-        self.to_account_combo['values'] = account_names
-        self.external_account_combo['values'] = account_names
-        
-        if account_names:
-            self.from_account_combo.set(account_names[0])
-            if len(account_names) > 1: 
-                 self.to_account_combo.set(account_names[1])
-            else: 
-                 self.to_account_combo.set(account_names[0])
-            self.external_account_combo.set(account_names[0])
-
-        self._update_transfer_type()
-
-        button_frame = ttk.Frame(master)
-        button_frame.grid(row=5, column=0, columnspan=2, pady=10)
-        
-        self.add_close_button = ttk.Button(button_frame, text="Добавить и закрыть", command=self._add_and_close)
-        self.add_close_button.pack(side="left", padx=5)
-        
-        self.add_more_button = ttk.Button(button_frame, text="Добавить еще", command=self._add_more)
-        self.add_more_button.pack(side="left", padx=5)
-        
-        self.cancel_button = ttk.Button(button_frame, text="Отмена", command=self.on_close)
-        self.cancel_button.pack(side="left", padx=5)
-
-        master.grid_columnconfigure(1, weight=1)
-
-    def _create_view_transfers_tab(self, master):
-        """Создает вкладку для просмотра и управления переводами"""
-        filter_frame = ttk.LabelFrame(master, text="Фильтры")
-        filter_frame.pack(fill="x", padx=5, pady=5)
-        
-        ttk.Label(filter_frame, text="Счет:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
-        self.filter_account_var = tk.StringVar()
-        self.filter_account_combo = ttk.Combobox(filter_frame, textvariable=self.filter_account_var, state="readonly")
-        self.filter_account_combo['values'] = ["Все"] + [acc_info['name'] for acc_id, acc_info in self.accounts_data.items()]
-        self.filter_account_combo.set("Все")
-        self.filter_account_combo.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
-        self.filter_account_combo.bind("<<ComboboxSelected>>", self._apply_filters)
-        
-        ttk.Label(filter_frame, text="Контрагент:").grid(row=0, column=2, padx=5, pady=2, sticky="w")
-        self.filter_counterparty_var = tk.StringVar()
-        self.filter_counterparty_combo = ttk.Combobox(filter_frame, textvariable=self.filter_counterparty_var, state="readonly")
-        self.filter_counterparty_combo.grid(row=0, column=3, padx=5, pady=2, sticky="ew")
-        self.filter_counterparty_combo.bind("<<ComboboxSelected>>", self._apply_filters)
-
+        self.setup_ui()
         self._update_counterparties_list()
         
-        ttk.Label(filter_frame, text="Дата от:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
-        self.filter_date_from = TtkDateEntry(filter_frame)
-        self.filter_date_from.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        self.filter_date_from.entry.bind("<KeyRelease>", self._apply_filters)
+    def _normalize_counterparty_name(self, name: str) -> str:
+        """Нормализует имя контрагента для единообразия.
         
-        ttk.Label(filter_frame, text="Дата до:").grid(row=1, column=2, padx=5, pady=2, sticky="w")
-        self.filter_date_to = TtkDateEntry(filter_frame)
-        self.filter_date_to.grid(row=1, column=3, padx=5, pady=2, sticky="ew")
-        self.filter_date_to.entry.bind("<KeyRelease>", self._apply_filters)
+        Применяет:
+        - Удаление лишних пробелов
+        - Приведение к заглавным буквам каждого слова (title case)
         
-        ttk.Button(filter_frame, text="Сбросить фильтры", command=self._reset_filters).grid(row=1, column=4, padx=5, pady=2)
+        Args:
+            name: Исходное имя контрагента
+            
+        Returns:
+            Нормализованное имя
+        """
+        if not name:
+            return ''
         
-        filter_frame.grid_columnconfigure(1, weight=1)
-        filter_frame.grid_columnconfigure(3, weight=1)
+        # Удаляем лишние пробелы
+        normalized = ' '.join(part.strip() for part in name.split())
+        # Приводим к заглавным буквам каждого слова
+        normalized = normalized.title()
         
-        tree_frame = ttk.Frame(master)
-        tree_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        return normalized
         
-        self.transfers_tree = ttk.Treeview(tree_frame, columns=("Дата", "Тип", "Сумма", "Откуда", "Куда", "Контрагент", "Описание"), show="headings")
+    def setup_ui(self):
+        """Настройка интерфейса"""
+        self.setWindowTitle("Управление Переводами")
+        self.resize(650, 350)
         
-        if hasattr(self.parent, 'setup_treeview_management'):
-            self.parent.setup_treeview_management(
-                self,
-                self.transfers_tree,
-                self._delete_selected_transfer,
-                edit_callback=None,
-                additional_commands=None
-            )
+        # center_window_relative(self, parent)
         
-        columns_config = {
-            "Дата": 100, "Тип": 80, "Сумма": 100, 
-            "Откуда": 120, "Куда": 120, "Контрагент": 120, "Описание": 200
-        }
+        if self.parent:
+            center_window_relative(self, self.parent)
         
-        for col, width in columns_config.items():
-            self.transfers_tree.heading(col, text=col)
-            self.transfers_tree.column(col, width=width)
+        main_layout = QVBoxLayout()
         
-        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.transfers_tree.yview)
-        scrollbar.pack(side="right", fill="y")
-        self.transfers_tree.configure(yscrollcommand=scrollbar.set)
-        self.transfers_tree.pack(side="left", fill="both", expand=True)
+        # Создаем вкладки
+        self.tab_widget = QTabWidget()
         
-        delete_button = ttk.Button(master, text="Удалить выбранные переводы", command=self._delete_selected_transfer)
-        delete_button.pack(pady=5)
+        # Вкладка добавления перевода
+        add_tab = QWidget()
+        self._create_add_transfer_tab(add_tab)
+        self.tab_widget.addTab(add_tab, "Добавить перевод")
         
+        # Вкладка просмотра переводов
+        view_tab = QWidget()
+        self._create_view_transfers_tab(view_tab)
+        self.tab_widget.addTab(view_tab, "Все переводы")
+        
+        main_layout.addWidget(self.tab_widget)
+        self.setLayout(main_layout)
+        
+    def _create_add_transfer_tab(self, parent):
+        """Создает вкладку для добавления переводов"""
+        layout = QVBoxLayout()
+        
+        # Группа для типа перевода
+        type_group = QGroupBox("Тип перевода")
+        type_layout = QHBoxLayout()
+        
+        self.transfer_type_group = QButtonGroup(self)
+        self.internal_radio = QRadioButton("Между моими счетами")
+        self.external_radio = QRadioButton("Внешний перевод")
+        self.internal_radio.setChecked(True)
+        
+        self.transfer_type_group.addButton(self.internal_radio, 0)
+        self.transfer_type_group.addButton(self.external_radio, 1)
+        self.transfer_type_group.buttonClicked.connect(self._update_transfer_type)
+        
+        type_layout.addWidget(self.internal_radio)
+        type_layout.addWidget(self.external_radio)
+        type_group.setLayout(type_layout)
+        layout.addWidget(type_group)
+        
+        # Форма для данных перевода
+        form_layout = QFormLayout()
+        
+        # Дата и Сумма в одной строке по горизонтали
+        date_amount_layout = QHBoxLayout()
+        date_amount_layout.setSpacing(10)
+        
+        # Дата
+        self.date_input = QDateEdit()
+        self.date_input.setCalendarPopup(True)
+        self.date_input.setDate(self.last_selected_date)
+        self.date_input.setDisplayFormat("dd.MM.yyyy")
+        self.date_input.setFixedHeight(26)
+        self.date_input.setFixedWidth(80)
+        
+        # Сумма
+        self.amount_input = QLineEdit()
+        self.amount_input.setPlaceholderText("0.00")
+        self.amount_input.setFixedHeight(26)
+        self.amount_input.setFixedWidth(100)
+        
+        date_amount_layout.addWidget(QLabel("Дата:"))
+        date_amount_layout.addWidget(self.date_input)
+        date_amount_layout.addWidget(QLabel("Сумма:"))
+        date_amount_layout.addWidget(self.amount_input)
+        date_amount_layout.addStretch()
+        
+        date_amount_widget = QWidget()
+        date_amount_widget.setLayout(date_amount_layout)
+        form_layout.addRow("", date_amount_widget)
+        
+        # Фреймы для разных типов переводов
+        self.internal_frame = QGroupBox("Внутренний перевод")
+        internal_form = QFormLayout()
+        
+        self.from_account_combo = QComboBox()
+        self.from_account_combo.setFixedHeight(26)
+        self.from_account_combo.setMinimumWidth(150)
+        self.from_account_combo.setMaximumWidth(300)
+        self.to_account_combo = QComboBox()
+        self.to_account_combo.setFixedHeight(26)
+        self.to_account_combo.setMinimumWidth(150)
+        self.to_account_combo.setMaximumWidth(300)
+        self._populate_accounts_combo(self.from_account_combo)
+        self._populate_accounts_combo(self.to_account_combo)
+        
+        # Счета рядом по горизонтали
+        accounts_layout = QHBoxLayout()
+        accounts_layout.addWidget(self.from_account_combo)
+        accounts_layout.addWidget(self.to_account_combo)
+        accounts_widget = QWidget()
+        accounts_widget.setLayout(accounts_layout)
+        internal_form.addRow("Со счета → На счет:", accounts_widget)
+        
+        self.internal_frame.setLayout(internal_form)
+        layout.addWidget(self.internal_frame)
+        
+        self.external_frame = QGroupBox("Внешний перевод")
+        external_form = QFormLayout()
+        
+        # Направление внешнего перевода
+        direction_group = QButtonGroup(self)
+        self.incoming_radio = QRadioButton("Мне перевели")
+        self.outgoing_radio = QRadioButton("Я перевел")
+        self.incoming_radio.setChecked(True)
+        
+        direction_layout = QHBoxLayout()
+        direction_layout.addWidget(self.incoming_radio)
+        direction_layout.addWidget(self.outgoing_radio)
+        direction_widget = QWidget()
+        direction_widget.setLayout(direction_layout)
+        
+        direction_group.addButton(self.incoming_radio, 0)
+        direction_group.addButton(self.outgoing_radio, 1)
+        
+        external_form.addRow("Направление:", direction_widget)
+        
+        # Счет для внешнего перевода
+        self.external_account_combo = QComboBox()
+        self.external_account_combo.setFixedHeight(26)
+        self.external_account_combo.setMinimumWidth(230)
+        self._populate_accounts_combo(self.external_account_combo)
+        external_form.addRow("Счет:", self.external_account_combo)
+        
+        # Контрагент
+        self.counterparty_input = QLineEdit()
+        self.counterparty_input.setFixedHeight(26)
+        self.counterparty_input.setMinimumWidth(230)
+        self.counterparty_input.setPlaceholderText("Имя контрагента")
+        
+        # Автодополнение для контрагентов
+        self.counterparty_completer = QCompleter()
+        self.counterparty_completer.setModel(self.counterparty_model)
+        self.counterparty_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.counterparty_completer.setFilterMode(Qt.MatchContains)
+        self.counterparty_completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.counterparty_input.setCompleter(self.counterparty_completer)
+        
+        external_form.addRow("Контрагент:", self.counterparty_input)
+        
+        # Подсказка о регистре
+        self.counterparty_hint = QLabel("⚠️ Регистр не учитывается: 'иван' и 'Иван' будут одним контрагентом")
+        self.counterparty_hint.setStyleSheet("font-size: 9px; color: gray; font-style: italic;")
+        external_form.addRow("", self.counterparty_hint)
+        
+        self.external_frame.setLayout(external_form)
+        layout.addWidget(self.external_frame)
+        self.external_frame.hide()
+        
+        # Описание
+        self.description_input = QLineEdit()
+        self.description_input.setPlaceholderText("Описание перевода")
+        self.description_input.setFixedHeight(26)
+        self.description_input.setMinimumWidth(230)
+        form_layout.addRow("Описание:", self.description_input)
+        
+        layout.addLayout(form_layout)
+        
+        # Кнопки
+        button_layout = QHBoxLayout()
+        
+        self.add_close_button = QPushButton("Добавить и закрыть")
+        self.add_close_button.setFixedHeight(26)
+        self.add_close_button.setFixedWidth(130)
+        self.add_close_button.clicked.connect(self._add_and_close)
+        button_layout.addWidget(self.add_close_button)
+        
+        self.add_more_button = QPushButton("Добавить еще")
+        self.add_more_button.setFixedHeight(26)
+        self.add_more_button.setFixedWidth(100)
+        self.add_more_button.clicked.connect(self._add_more)
+        button_layout.addWidget(self.add_more_button)
+        
+        self.cancel_button = QPushButton("Отмена")
+        self.cancel_button.setFixedHeight(26)
+        self.cancel_button.setFixedWidth(100)
+        self.cancel_button.clicked.connect(self.on_close)
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addLayout(button_layout)
+        layout.addStretch()
+        
+        parent.setLayout(layout)
+        
+    def _create_view_transfers_tab(self, parent):
+        """Создает вкладку для просмотра и управления переводами"""
+        layout = QVBoxLayout()
+        
+        # Фильтры
+        filter_group = QGroupBox("Фильтры")
+        filter_layout = QFormLayout()
+        
+        # Счет и контрагент в одной строке по горизонтали
+        account_counterparty_layout = QHBoxLayout()
+        
+        # Фильтр по счету
+        self.filter_account_combo = QComboBox()
+        self.filter_account_combo.setFixedHeight(26)
+        self.filter_account_combo.setMaximumWidth(300)
+        self.filter_account_combo.setMinimumWidth(150)
+
+        self.filter_account_combo.addItem("Все")
+        
+        # Загружаем активные счета
+        accounts = self.db.get_accounts(active_only=True, include_system=False)
+        for account in accounts:
+            self.filter_account_combo.addItem(account['name'], account['id'])
+        
+        self.filter_account_combo.currentIndexChanged.connect(self._apply_filters)
+        
+        # Фильтр по контрагенту
+        self.filter_counterparty_combo = QComboBox()
+        self.filter_counterparty_combo.setFixedHeight(26)
+        self.filter_counterparty_combo.setMinimumWidth(150)
+        self.filter_counterparty_combo.setMaximumWidth(300)
+        self.filter_counterparty_combo.currentIndexChanged.connect(self._apply_filters)
+        
+        account_counterparty_layout.addWidget(QLabel("Счет:"))
+        account_counterparty_layout.addWidget(self.filter_account_combo)
+        account_counterparty_layout.addSpacing(20)
+        account_counterparty_layout.addWidget(QLabel("Контрагент:"))
+        account_counterparty_layout.addWidget(self.filter_counterparty_combo)
+        account_counterparty_layout.addStretch()
+        
+        account_counterparty_widget = QWidget()
+        account_counterparty_widget.setLayout(account_counterparty_layout)
+        filter_layout.addRow("", account_counterparty_widget)
+        
+        # Фильтр по дате (выравнивание влево)
+        date_layout = QHBoxLayout()
+        date_layout.setAlignment(Qt.AlignLeft)
+        
+        self.filter_date_from = QDateEdit()
+        self.filter_date_from.setFixedHeight(26) 
+        self.filter_date_from.setFixedWidth(80)
+        self.filter_date_from.setCalendarPopup(True)
+        self.filter_date_from.setDisplayFormat("dd.MM.yyyy")
+        self.filter_date_from.dateChanged.connect(self._apply_filters)
+        
+        self.filter_date_to = QDateEdit()
+        self.filter_date_to.setFixedHeight(26) 
+        self.filter_date_to.setFixedWidth(80)
+        self.filter_date_to.setCalendarPopup(True)
+        self.filter_date_to.setDisplayFormat("dd.MM.yyyy")
+        self.filter_date_to.setDate(QDate.currentDate())
+        self.filter_date_to.dateChanged.connect(self._apply_filters)
+        
+        date_layout.addWidget(QLabel("Дата от:"))
+        date_layout.addWidget(self.filter_date_from)
+        date_layout.addWidget(QLabel("до:"))
+        date_layout.addWidget(self.filter_date_to)
+        
+        date_widget = QWidget()
+        date_widget.setLayout(date_layout)
+        filter_layout.addRow("", date_widget)
+        
+        filter_group.setLayout(filter_layout)
+        layout.addWidget(filter_group)
+        
+        # Таблица переводов
+        self.transfers_tree = QTreeWidget()
+        self.transfers_tree.setHeaderLabels(["Дата", "Тип", "Сумма", "Откуда", "Куда", "Контрагент", "Описание"])
+        self.transfers_tree.setAlternatingRowColors(True)
+        
+        # Настройка ширины колонок
+        header = self.transfers_tree.header()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        self.transfers_tree.setColumnWidth(0, 100)  # Дата
+        self.transfers_tree.setColumnWidth(1, 80)   # Тип
+        self.transfers_tree.setColumnWidth(2, 100)  # Сумма
+        self.transfers_tree.setColumnWidth(3, 120)  # Откуда
+        self.transfers_tree.setColumnWidth(4, 120)  # Куда
+        self.transfers_tree.setColumnWidth(5, 120)  # Контрагент
+        self.transfers_tree.setColumnWidth(6, 200)  # Описание
+        
+        layout.addWidget(self.transfers_tree, 1)
+        
+        # Настраиваем контекстное меню для таблицы
+        self.transfers_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.transfers_tree.customContextMenuRequested.connect(self._show_context_menu)
+        
+        # Кнопка сброса фильтров
+        reset_button = QPushButton("Сбросить фильтры")
+        reset_button.setFixedHeight(26)
+        reset_button.setFixedWidth(130)
+        reset_button.clicked.connect(self._reset_filters)
+        layout.addWidget(reset_button)
+        
+        parent.setLayout(layout)
+        
+        # Загружаем данные
         self._load_transfers_data()
-
-    def on_close(self):
-        """Закрывает диалоговое окно."""
-        self.grab_release()
-        self.destroy()
-
+        
+    def _populate_accounts_combo(self, combo):
+        """Заполняет комбобокс счетами"""
+        combo.clear()
+        accounts = self.db.get_accounts(active_only=True, include_system=False)
+        
+        for account in accounts:
+            combo.addItem(account['name'], account['id'])
+        
     def _update_counterparties_list(self):
         """Обновляет список контрагентов из базы данных"""
         try:
-            if not self.winfo_exists() or not self.filter_counterparty_combo.winfo_exists():
-                print("DEBUG: TransferDialog closed, skipping counterparty update")
-                return
-                
-            all_accounts = self.db.get_accounts()
-            counterparties = []
+            counterparties = set()
             
-            for account in all_accounts:
-                if len(account) >= 2:
-                    account_id = account[0]
-                    name = account[1]
-                    if "Контрагент:" in name:
-                        counterparty_name = name.replace("Контрагент:", "").strip()
-                        if counterparty_name and counterparty_name not in counterparties:
-                            counterparties.append(counterparty_name)
-                
-            counterparties.sort()
+            # Получаем счета контрагентов
+            counterparty_accounts = self.db.get_counterparty_accounts()
             
-            if self.winfo_exists() and self.filter_counterparty_combo.winfo_exists():
-                self.filter_counterparty_combo['values'] = ["Все"] + counterparties
-                self.filter_counterparty_combo.set("Все")
-                
-                print(f"DEBUG: Loaded {len(counterparties)} counterparties")
+            for account in counterparty_accounts:
+                if account['type'] == 'Counterparty':
+                    counterparty_name = account['name'].replace("Контрагент:", "").strip()
+                    if counterparty_name:
+                        # Нормализуем имя для единообразия
+                        normalized_name = self._normalize_counterparty_name(counterparty_name)
+                        counterparties.add(normalized_name)
+            
+            counterparties_list = list(counterparties)
+            counterparties_list.sort()
+            
+            # Обновляем комбобокс фильтра
+            self.filter_counterparty_combo.clear()
+            self.filter_counterparty_combo.addItem("Все")
+            self.filter_counterparty_combo.addItems(counterparties_list)
+            self.filter_counterparty_combo.setCurrentIndex(0)
+            
+            # Обновляем модель автодополнения
+            if self.counterparty_model:
+                self.counterparty_model.setStringList(counterparties_list)
             
         except Exception as e:
             print(f"Error updating counterparties list: {e}")
-    
+            
     def _load_transfers_data(self, account_id=None, counterparty=None, date_from=None, date_to=None):
         """Загружает данные в таблицу переводов с учетом фильтров"""
-        for item in self.transfers_tree.get_children():
-            self.transfers_tree.delete(item)
+        self.transfers_tree.clear()
         
-        transfers = self.db.get_transfers()
-        
-        for transfer in transfers:
-            transfer_id, date, amount, from_acc, to_acc, description = transfer
-            
-            if "Контрагент:" in from_acc and "Контрагент:" in to_acc:
-                continue
-            
-            transfer_type = "Внутренний"
-            counterparty_name = ""
-            
-            if "Контрагент:" in from_acc or "Контрагент:" in to_acc:
-                transfer_type = "Внешний"
-                
-                if "Контрагент:" in from_acc:
-                    counterparty_name = from_acc.replace("Контрагент:", "").strip()
-                else:
-                    counterparty_name = to_acc.replace("Контрагент:", "").strip()
-            else:
-                counterparty_name = ""
-            
+        try:
+            # Подготавливаем фильтры
+            filters = {}
             if account_id:
-                account_name = None
-                for acc_id, acc_info in self.accounts_data.items():
-                    if acc_id == account_id:
-                        account_name = acc_info['name']
-                        break
+                filters['account_id'] = account_id
+            if date_from:
+                filters['date_from'] = date_from.toString("yyyy-MM-dd")
+            if date_to:
+                filters['date_to'] = date_to.toString("yyyy-MM-dd")
+            
+            # Получаем переводы
+            transfers = self.db.get_transfers(filters=filters)
+            
+            for transfer in transfers:
+                transfer_id = transfer['id']
+                date = transfer['date']
+                amount = transfer['amount']
+                from_acc = transfer['from_account_name']
+                to_acc = transfer['to_account_name']
+                description = transfer.get('description', '')
                 
-                if account_name and account_name not in [from_acc, to_acc]:
+                # Определяем тип перевода и контрагента
+                transfer_type = "Внутренний"
+                counterparty_name = ""
+                
+                # Проверяем, является ли один из счетов контрагентом
+                from_is_counterparty = transfer.get('from_account_type') == 'Counterparty'
+                to_is_counterparty = transfer.get('to_account_type') == 'Counterparty'
+                
+                if from_is_counterparty or to_is_counterparty:
+                    transfer_type = "Внешний"
+                    
+                    if from_is_counterparty:
+                        counterparty_name = from_acc.replace("Контрагент:", "").strip()
+                    else:
+                        counterparty_name = to_acc.replace("Контрагент:", "").strip()
+                
+                # Применяем фильтр по контрагенту
+                if counterparty and counterparty.lower() not in counterparty_name.lower():
                     continue
-            
-            if counterparty and counterparty.lower() not in counterparty_name.lower():
-                continue
                 
-            if date_from and date < date_from:
-                continue
+                # Форматируем дату для отображения
+                display_date = QDate.fromString(date, "yyyy-MM-dd").toString("dd.MM.yyyy") if isinstance(date, str) else date
                 
-            if date_to and date > date_to:
-                continue
+                # Добавляем в таблицу
+                item = QTreeWidgetItem(self.transfers_tree)
+                item.setText(0, display_date)
+                item.setText(1, transfer_type)
+                item.setText(2, f"{amount:.2f} ₽")
+                item.setText(3, from_acc)
+                item.setText(4, to_acc)
+                item.setText(5, counterparty_name)
+                item.setText(6, description)
+                item.setData(0, Qt.UserRole, transfer_id)
             
-            display_from = from_acc
-            display_to = to_acc
+            item_count = self.transfers_tree.topLevelItemCount()
             
-            self.transfers_tree.insert("", "end", iid=transfer_id, 
-                                     values=(date, transfer_type, f"{amount:.2f} ₽", 
-                                             display_from, display_to, counterparty_name, description))
-        
-        item_count = len(self.transfers_tree.get_children())
-        print(f"DEBUG: Loaded {item_count} transfers with filters")
-
-    def _apply_filters(self, event=None):
+        except Exception as e:
+            print(f"Error loading transfers data: {e}")
+            QMessageBox.warning(self, "Ошибка", f"Не удалось загрузить данные о переводах: {str(e)}")
+            
+    def _apply_filters(self):
         """Применяет фильтры к таблице переводов"""
-        account_filter = self.filter_account_var.get()
-        account_id = None
-        if account_filter != "Все":
-            for acc_id, acc_info in self.accounts_data.items():
-                if acc_info['name'] == account_filter:
-                    account_id = acc_id
-                    break
-        
-        counterparty_filter = self.filter_counterparty_var.get()
-        counterparty = counterparty_filter if counterparty_filter != "Все" else None
-        
-        date_from = self.filter_date_from.get_date() if self.filter_date_from.get_date() else None
-        date_to = self.filter_date_to.get_date() if self.filter_date_to.get_date() else None
-        
-        self._load_transfers_data(account_id, counterparty, date_from, date_to)
-
+        try:
+            # Фильтр по счету
+            account_id = None
+            current_account_id = self.filter_account_combo.currentData()
+            if current_account_id:
+                account_id = current_account_id
+            elif self.filter_account_combo.currentText() != "Все":
+                # Ищем по имени
+                account_name = self.filter_account_combo.currentText()
+                accounts = self.db.get_accounts(active_only=True, include_system=False)
+                for account in accounts:
+                    if account['name'] == account_name:
+                        account_id = account['id']
+                        break
+            
+            # Фильтр по контрагенту
+            counterparty = None
+            if self.filter_counterparty_combo.currentText() != "Все":
+                counterparty = self.filter_counterparty_combo.currentText()
+            
+            # Фильтры по дате
+            date_from = self.filter_date_from.date() if self.filter_date_from.date().isValid() else None
+            date_to = self.filter_date_to.date() if self.filter_date_to.date().isValid() else None
+            
+            self._load_transfers_data(account_id, counterparty, date_from, date_to)
+            
+        except Exception as e:
+            print(f"Error applying filters: {e}")
+            
     def _reset_filters(self):
         """Сбрасывает все фильтры"""
-        self.filter_account_var.set("Все")
-        self.filter_counterparty_var.set("Все")
-        self.filter_date_from.var.set("")
-        self.filter_date_to.var.set("")
+        self.filter_account_combo.setCurrentIndex(0)
+        self.filter_counterparty_combo.setCurrentIndex(0)
+        self.filter_date_from.clear()
+        self.filter_date_to.setDate(QDate.currentDate())
         self._load_transfers_data()
-
+        
     def _delete_selected_transfer(self):
-        self.master.delete_selected_items_universal(
-            self.transfers_tree,
-            "переводы",
-            lambda transfer_id: self.db.delete_transfer(transfer_id),
-            refresh_callback=self._load_transfers_data,
-            parent=self
+        """Удаляет выбранный перевод"""
+        selected_items = self.transfers_tree.selectedItems()
+        
+        if not selected_items:
+            QMessageBox.information(self, "Удаление", "Выберите перевод для удаления.")
+            return
+        
+        item = selected_items[0]
+        transfer_id = item.data(0, Qt.UserRole)
+        date = item.text(0)
+        amount = item.text(2)
+        
+        reply = QMessageBox.question(
+            self, "Подтверждение удаления",
+            f"Вы уверены, что хотите удалить перевод от {date} на сумму {amount}?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
-
+        
+        if reply == QMessageBox.Yes:
+            if self.db.delete_transfer(transfer_id):
+                self.show_status_message("✅ Перевод успешно удален", "success")
+                self._load_transfers_data()
+                self.data_updated.emit()
+                self._update_counterparties_list()
+            else:
+                QMessageBox.warning(self, "Ошибка", "Не удалось удалить перевод.")
+                
+    def _show_context_menu(self, position):
+        """Показывает контекстное меню для переводов"""
+        item = self.transfers_tree.itemAt(position)
+        if not item:
+            return
+            
+        menu = QMenu(self)
+        
+        delete_action = menu.addAction("Удалить перевод")
+        action = menu.exec_(self.transfers_tree.viewport().mapToGlobal(position))
+        
+        if action == delete_action:
+            self.transfers_tree.setCurrentItem(item)
+            self._delete_selected_transfer()
+                
     def _update_transfer_type(self):
         """Обновляет видимость полей в зависимости от типа перевода"""
-        if self.transfer_type.get() == "internal":
-            self.internal_frame.grid()
-            self.external_frame.grid_remove()
-            self.title("Добавить Перевод Между Счетами")
+        if self.internal_radio.isChecked():
+            self.internal_frame.show()
+            self.external_frame.hide()
         else:
-            self.internal_frame.grid_remove()
-            self.external_frame.grid()
-            self.title("Добавить Внешний Перевод")
-
+            self.internal_frame.hide()
+            self.external_frame.show()
+            
     def _add_transfer(self):
         """Добавляет перевод и возвращает True при успехе"""
-        date_str = self.date_input.get_date()
-        amount_str = self.amount_input.get().strip()
-        description = self.description_input.get().strip()
-
+        # Получаем данные из формы
+        date = self.date_input.date().toString("yyyy-MM-dd")
+        amount_str = self.amount_input.text().strip().replace(',', '.')
+        description = self.description_input.text().strip()
+        
+        # Проверка суммы
         if not amount_str:
-            messagebox.showerror("Ошибка ввода", "Пожалуйста, введите сумму.", parent=self)
+            QMessageBox.critical(self, "Ошибка ввода", "Пожалуйста, введите сумму.")
             return False
             
-        amount_str = amount_str.replace(',', '.')
-
         try:
             amount = float(amount_str)
             if amount <= 0:
                 raise ValueError("Сумма перевода должна быть положительной.")
         except ValueError as e:
-            messagebox.showerror("Ошибка ввода", f"Некорректная сумма: {e}", parent=self)
+            QMessageBox.critical(self, "Ошибка ввода", f"Некорректная сумма: {e}")
             return False
-
-        print(f"DEBUG TransferDialog: transfer_type={self.transfer_type.get()}, amount={amount}")
-
-        if self.transfer_type.get() == "internal":
-            print("DEBUG: Creating INTERNAL transfer")
-            from_account_name = self.from_account_var.get()
-            to_account_name = self.to_account_var.get()
+        
+        if self.internal_radio.isChecked():
+            # Внутренний перевод
+            from_account_id = self.from_account_combo.currentData()
+            to_account_id = self.to_account_combo.currentData()
             
-            from_account_id = None
-            to_account_id = None
-            for acc_id, acc_info in self.accounts_data.items():
-                if acc_info['name'] == from_account_name:
-                    from_account_id = acc_id
-                if acc_info['name'] == to_account_name:
-                    to_account_id = acc_id
-            
-            if from_account_id is None or to_account_id is None:
-                messagebox.showerror("Ошибка ввода", "Пожалуйста, выберите оба счета.", parent=self)
+            if not from_account_id or not to_account_id:
+                QMessageBox.critical(self, "Ошибка ввода", "Пожалуйста, выберите оба счета.")
                 return False
                 
             if from_account_id == to_account_id:
-                messagebox.showerror("Ошибка ввода", "Счета 'Откуда' и 'Куда' не могут быть одинаковыми.", parent=self)
+                QMessageBox.critical(self, "Ошибка ввода", "Счета 'Откуда' и 'Куда' не могут быть одинаковыми.")
                 return False
-
-            print(f"DEBUG: Internal transfer from {from_account_id} to {to_account_id}")
-            if self.db.add_transfer(date_str, amount, from_account_id, to_account_id, description):
-                self.master.last_selected_date = date_str
-                return True
-            else:
-                messagebox.showerror("Ошибка", "Не удалось добавить перевод.", parent=self)
-                return False
-        else:
-            print("DEBUG: Creating EXTERNAL transfer")
-            account_name = self.external_account_var.get()
-            counterparty = self.counterparty_input.get().strip()
-            direction = self.direction_var.get()
             
-            if not counterparty:
-                messagebox.showerror("Ошибка ввода", "Введите имя контрагента.", parent=self)
+            # Добавляем перевод в БД
+            transfer_data = {
+                'date': date,
+                'amount': amount,
+                'from_account_id': from_account_id,
+                'to_account_id': to_account_id,
+                'description': description
+            }
+            
+            try:
+                transfer_id = self.db.add_transfer(transfer_data)
+                if transfer_id:
+                    self.show_status_message("✅ Внутренний перевод успешно добавлен", "success")
+                    self.last_selected_date = self.date_input.date()
+                    return True
+                else:
+                    QMessageBox.critical(self, "Ошибка", "Не удалось добавить перевод.")
+                    return False
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось добавить перевод: {str(e)}")
                 return False
                 
-            account_id = None
-            for acc_id, acc_info in self.accounts_data.items():
-                if acc_info['name'] == account_name:
-                    account_id = acc_id
-                    break
+        else:
+            # Внешний перевод
+            account_id = self.external_account_combo.currentData()
+            counterparty = self.counterparty_input.text().strip()
             
-            if account_id is None:
-                messagebox.showerror("Ошибка ввода", "Пожалуйста, выберите счет.", parent=self)
+            if not counterparty:
+                QMessageBox.critical(self, "Ошибка ввода", "Введите имя контрагента.")
                 return False
-
-            full_description = f"Внешний перевод: {description}" if description else "Внешний перевод"
+                
+            if not account_id:
+                QMessageBox.critical(self, "Ошибка ввода", "Пожалуйста, выберите счет.")
+                return False
             
-            print(f"DEBUG: External transfer - account: {account_id}, direction: {direction}, counterparty: {counterparty}")
+            # Нормализуем имя контрагента для предотвращения дублирования
+            normalized_counterparty = self._normalize_counterparty_name(counterparty)
             
-            counterparty_account_name = f"Контрагент: {counterparty}"
-
-            counterparty_account = self.db.get_account_by_name(counterparty_account_name)
-
-            if not counterparty_account:
-                if self.db.add_account(counterparty_account_name, "Counterparty", 0.0):
-                    counterparty_account = self.db.get_account_by_name(counterparty_account_name)
-                    print(f"DEBUG: Created counterparty account: {counterparty_account_name}")
+            # Определяем направление
+            if self.incoming_radio.isChecked():
+                # Нам перевели: контрагент → наш счет
+                from_account_id = self.db.create_counterparty_account(normalized_counterparty)
+                to_account_id = account_id
+            else:
+                # Мы перевели: наш счет → контрагент
+                from_account_id = account_id
+                to_account_id = self.db.create_counterparty_account(normalized_counterparty)
+            
+            # Добавляем перевод
+            transfer_data = {
+                'date': date,
+                'amount': amount,
+                'from_account_id': from_account_id,
+                'to_account_id': to_account_id,
+                'description': description
+            }
+            
+            try:
+                transfer_id = self.db.add_transfer(transfer_data)
+                if transfer_id:
+                    self.show_status_message("✅ Внешний перевод успешно добавлен", "success")
+                    self.last_selected_date = self.date_input.date()
+                    self._update_counterparties_list()  # Обновляем список контрагентов
+                    return True
                 else:
-                    messagebox.showerror("Ошибка", "Не удалось создать счет контрагента.", parent=self)
+                    QMessageBox.critical(self, "Ошибка", "Не удалось добавить внешний перевод.")
                     return False
-            else:
-                print(f"DEBUG: Found existing counterparty account: {counterparty_account_name}")
-
-            counterparty_account_id = counterparty_account[0]
-            
-            if direction == "incoming":
-                result = self.db.add_transfer(date_str, amount, counterparty_account_id, account_id, full_description)
-            else:
-                result = self.db.add_transfer(date_str, amount, account_id, counterparty_account_id, full_description)
-            
-            if result:
-                self.master.last_selected_date = date_str
-                return True
-            else:
-                messagebox.showerror("Ошибка", "Не удалось добавить внешний перевод.", parent=self)
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось добавить внешний перевод: {str(e)}")
                 return False
-
+                
     def _add_and_close(self):
-        """Добавляет перевод и закрывает окно."""
-        if self._add_transfer():            
+        """Добавляет перевод и закрывает окно"""
+        if self._add_transfer():
             self._update_counterparties_list()
-            self.on_close()
+            self.data_updated.emit()
+            self.accept()
             
     def _add_more(self):
         """Добавляет перевод и очищает поля для следующего ввода"""
         if self._add_transfer():
-            self._update_counterparties_list()
-            self._already_processed = True
-            self.amount_input.delete(0, tk.END)
-            self.description_input.delete(0, tk.END)
-            self.amount_input.focus_set()
+            self.amount_input.clear()
+            self.description_input.clear()
+            self.counterparty_input.clear()
+            self.amount_input.setFocus()
             
-    def _setup_transfers_delete_binding(self):
-        """Настраивает обработку Delete для таблицы переводов"""
-        def on_delete(event):
-            self._delete_selected_transfer()
-        
-        def on_key_press(event):
-            if event.keysym == 'Delete':
-                selected_items = self.transfers_tree.selection()
-                if selected_items:
-                    self._delete_selected_transfer()
-                    return "break"
-        
-        self.transfers_tree.bind('<Delete>', on_key_press)
-        self.transfers_tree.bind('<Button-3>', lambda e: self.transfers_tree.focus())
+    def show_status_message(self, message, message_type="info"):
+        """Показывает сообщение в статусе родительского окна"""
+        if hasattr(self.parent, 'show_status_message'):
+            self.parent.show_status_message(message, 3000)
+        else:
+            print(f"STATUS [{message_type}]: {message}")
+            
+    def on_close(self):
+        """Закрывает диалоговое окно"""
+        self.data_updated.emit()
+        self.reject()

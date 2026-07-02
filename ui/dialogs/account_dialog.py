@@ -1,895 +1,941 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
-from datetime import datetime
+# ui/dialogs/account_dialog.py
+"""
+Диалог управления счетами на PySide6 с архитектурой MVP.
+"""
+import logging
+from datetime import datetime, date
 
-from core.database import DatabaseManager
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
+    QLabel, QLineEdit, QComboBox, QPushButton, QFrame, QMessageBox,
+    QScrollArea, QTextEdit, QProgressBar, QGroupBox, QGridLayout,
+    QHeaderView, QSplitter, QMenu, QApplication, QWidget,
+    QDialogButtonBox, QStatusBar, QProgressDialog, QRadioButton
+)
+from PySide6.QtCore import Qt, Signal, QTimer, QDate, QThread
+from PySide6.QtGui import QFont, QColor, QAction
+
+from core.database import DatabaseManager  # для обратной совместимости
+from core.db import Database
+from ui.presenters.account_presenter import AccountPresenter
 from ui.widgets.window_utils import center_window_relative
-from ui.widgets.calendar_widgets import TtkDateEntry  # если используете
+from ui.widgets.colored_button import CompactButton, ColoredButton
+from ui.styles.theme_manager import ThemeManager
+from utils.parsers import parse_int, parse_float
+import config
 
-class AccountManagementDialog(tk.Toplevel):
-    """Диалог для управления счетами в Tkinter."""
+logger = logging.getLogger(__name__)
+
+
+class AccountManagementDialog(QDialog):
+    """Диалог управления счетами на PySide6"""
     
-    def __init__(self, parent, db_manager):
+    data_updated = Signal()
+
+    
+    def __init__(self, parent, db):
+        """
+        Инициализация диалога.
+        
+        Args:
+            parent: родительское окно
+            db: экземпляр DatabaseManager (старый) или Database (новый)
+        """
         super().__init__(parent)
         self.parent = parent
-        self.db = db_manager
-        self.accounts = self.db.get_accounts()
-        
-        self.title("Управление Счетами")
-        self.geometry("400x600")
-        
-        center_window_relative(self, self.parent)
-        
-        self._create_ui()
-        
-    def _create_ui(self):
-        """Создает интерфейс диалога."""
-        main_frame = ttk.Frame(self)
-        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        tree_frame = ttk.Frame(main_frame)
-        tree_frame.pack(fill="both", expand=True, pady=5)
-        
-        self.accounts_tree = ttk.Treeview(tree_frame, columns=("Название", "Тип", "Баланс"), show="headings")
-        self.accounts_tree.heading("Название", text="Название")
-        self.accounts_tree.heading("Тип", text="Тип")
-        self.accounts_tree.heading("Баланс", text="Баланс")
-        self.accounts_tree.column("Название", width=150)
-        self.accounts_tree.column("Тип", width=100)
-        self.accounts_tree.column("Баланс", width=100)
-        self.accounts_tree.pack(side="left", fill="both", expand=True)
-        
-        yscrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.accounts_tree.yview)
-        yscrollbar.pack(side="right", fill="y")
-        self.accounts_tree.config(yscrollcommand=yscrollbar.set)
-        
-        if hasattr(self.parent, 'setup_treeview_management'):
-            self.parent.setup_treeview_management(
-                parent=self,
-                treeview=self.accounts_tree,
-                delete_callback=self._delete_selected_account,
-                edit_callback=self._edit_account,
-                additional_commands=[
-                    ("📊 Статистика счета", self._show_account_stats),
-                    ("🔄 Обновить баланс", self._refresh_account_balance),
-                    ("🧮 Пересчитать баланс", self._recalculate_single_account_balance)
-                ]
-            )
+        self.setWindowTitle("Управление Счетами")
+        self.resize(500, 640)
 
-        self.accounts_tree.bind("<<TreeviewSelect>>", self._on_account_select)
         
-        form_frame = ttk.LabelFrame(main_frame, text="Добавить/Редактировать счет")
-        form_frame.pack(pady=5, fill="x")
         
-        form_grid = ttk.Frame(form_frame)
-        form_grid.pack(padx=5, pady=5, fill="x")
-
-        ttk.Label(form_grid, text="Название счета:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
-        self.name_input = ttk.Entry(form_grid)
-        self.name_input.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
-
-        ttk.Label(form_grid, text="Тип счета:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
-        self.type_combo_var = tk.StringVar()
-        self.type_combo = ttk.Combobox(form_grid, textvariable=self.type_combo_var, 
-                                      values=["Cash", "Bank Account", "Credit Card"], state="readonly")
-        self.type_combo.set("Bank Account") 
-        self.type_combo.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-
-        ttk.Label(form_grid, text="Начальный баланс:").grid(row=2, column=0, padx=5, pady=2, sticky="w")
-        self.initial_balance_input = ttk.Entry(form_grid)
-        self.initial_balance_input.insert(0, "0.0")
-        self.initial_balance_input.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
-
-        ttk.Label(form_grid, text="Кредитный лимит:").grid(row=3, column=0, padx=5, pady=2, sticky="w")
-        self.credit_limit_input = ttk.Entry(form_grid)
-        self.credit_limit_input.insert(0, "0.0")
-        self.credit_limit_input.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
-
-        ttk.Label(form_grid, text="День платежа (1-31):").grid(row=4, column=0, padx=5, pady=2, sticky="w")
-        self.payment_day_input = ttk.Entry(form_grid)
-        self.payment_day_input.insert(0, "1")
-        self.payment_day_input.grid(row=4, column=1, padx=5, pady=2, sticky="ew")
-
-        ttk.Label(form_grid, text="Мин. платеж (%):").grid(row=5, column=0, padx=5, pady=2, sticky="w")
-        self.min_payment_input = ttk.Entry(form_grid)
-        self.min_payment_input.insert(0, "5.0")
-        self.min_payment_input.grid(row=5, column=1, padx=5, pady=2, sticky="ew")
-
-        self.type_combo.bind('<<ComboboxSelected>>', self._on_type_change)
-
-        button_frame = ttk.Frame(form_grid)
-        button_frame.grid(row=6, column=0, columnspan=2, pady=5, sticky="ew")
-
-        self.add_button = ttk.Button(button_frame, text="Добавить", command=self._add_account)
-        self.add_button.pack(side="left", expand=True, fill="x", padx=2)
-
-        self.edit_button = ttk.Button(button_frame, text="Сохранить изменения", 
-                                     command=self._edit_account, state="disabled")
-        self.edit_button.pack(side="left", expand=True, fill="x", padx=2)
-
-        special_buttons_frame = ttk.Frame(main_frame)
-        special_buttons_frame.pack(fill="x", pady=5)
-
-        self.load_initial_balance_btn = ttk.Button(
-            special_buttons_frame, 
-            text="🔄 Загрузить начальный баланс из БД", 
-            command=self._load_initial_balance_from_db
-        )
-        self.load_initial_balance_btn.pack(fill="x", pady=2)
-
-        self.fix_balances_btn = ttk.Button(
-            special_buttons_frame, 
-            text="⚙️ Исправить балансы (после импорта)", 
-            command=self._fix_balances_after_import
-        )
-        self.fix_balances_btn.pack(fill="x", pady=2)
-
-        self.recalculate_balances_btn = ttk.Button(
-            special_buttons_frame, 
-            text="🧮 Пересчитать все текущие балансы", 
-            command=self._recalculate_current_balances
-        )
-        self.recalculate_balances_btn.pack(fill="x", pady=2)
-
-        close_frame = ttk.Frame(main_frame)
-        close_frame.pack(pady=5)
-
-        close_btn = ttk.Button(close_frame, text="Закрыть", command=self.on_close)
-        close_btn.pack(pady=5)
-
-        form_grid.grid_columnconfigure(1, weight=1)
-
-        self.editing_account_id = None 
-        self.load_accounts_into_tree()
+        center_window_relative(self, parent)
         
-    def on_close(self):
-        """Закрывает диалоговое окно."""
-        self.grab_release()
-        self.destroy()
-
-    def _show_recalculation_details(self):
-        """Показывает детали перерасчета балансов"""
-        accounts = self.db.get_accounts()
+        # Загрузка стилей из внешнего файла
+        self._load_styles()
         
-        details_text = "Детали перерасчета:\n\n"
+        # Определяем тип базы данных и создаем презентер
+        self._init_database(db)
+        self.presenter = AccountPresenter(self.database)
+        self._connect_presenter_signals()
         
-        for account in accounts:
-            account_id, name, acc_type, initial_balance, current_balance = account
-            details_text += f"• {name}: {current_balance:.2f} ₽\n"
-        
-        details_text += f"\nВсего обработано: {len(accounts)} счетов"
-        
-        details_window = tk.Toplevel(self)
-        details_window.title("Детали перерасчета")
-        details_window.geometry("400x300")
-        details_window.transient(self)
-        details_window.grab_set()
-        
-        text_frame = ttk.Frame(details_window)
-        text_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        text_widget = tk.Text(text_frame, wrap="word", font=("TkDefaultFont", 9))
-        text_widget.insert("1.0", details_text)
-        text_widget.config(state="disabled")
-        
-        scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text_widget.yview)
-        text_widget.configure(yscrollcommand=scrollbar.set)
-        
-        text_widget.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        
-        ttk.Button(details_window, text="Закрыть", command=details_window.destroy).pack(pady=10)
-        
-    def _recalculate_single_account_balance(self):
-        """Пересчитывает баланс только для выбранного счета"""
-        selected_item = self.accounts_tree.selection()
-        if not selected_item:
-            messagebox.showinfo("Перерасчет", "Выберите счет для перерасчета.", parent=self)
-            return
-        
-        account_id = int(selected_item[0])
-        account_name = self.accounts_tree.item(selected_item[0], 'values')[0]
-        
-        if self.db.recalculate_single_account_balance(account_id):
-            self.load_accounts_into_tree()
-            messagebox.showinfo(
-                "Перерасчет завершен", 
-                f"Баланс счета '{account_name}' пересчитан.",
-                parent=self
-            )
-        else:
-            messagebox.showerror("Ошибка", "Не удалось пересчитать баланс.", parent=self)
-    
-    def _recalculate_current_balances(self):
-        """Пересчитывает текущие балансы для всех счетов на основе транзакций"""
-        if not messagebox.askyesno(
-            "Перерасчет балансов", 
-            "Эта функция пересчитает текущие балансы ВСЕХ счетов на основе транзакций.\n\n"
-            "Это полезно если:\n"
-            "• Балансы не соответствуют транзакциям\n"
-            "• Были прямые изменения в БД\n"
-            "• Нужно восстановить корректные данные\n\n"
-            "Процесс может занять несколько секунд.\nПродолжить?",
-            parent=self
-        ):
-            return
-        
-        progress_window = tk.Toplevel(self)
-        progress_window.title("Перерасчет балансов")
-        progress_window.geometry("400x150")
-        progress_window.transient(self)
-        progress_window.grab_set()
-        
-        ttk.Label(progress_window, text="Пересчет текущих балансов...", 
-                 font=("TkDefaultFont", 10, "bold")).pack(pady=10)
-        
-        progress_status = ttk.Label(progress_window, text="Подготовка...", 
-                                   font=("TkDefaultFont", 9))
-        progress_status.pack(pady=5)
-        
-        progress_var = tk.DoubleVar()
-        progress_bar = ttk.Progressbar(progress_window, variable=progress_var, 
-                                     maximum=100, length=350)
-        progress_bar.pack(fill="x", padx=20, pady=10)
-        
-        import threading
-        
-        def run_recalculation():
-            try:
-                def update_progress(status, percent):
-                    if progress_window.winfo_exists():
-                        progress_window.after(0, lambda: update_ui(status, percent))
-                
-                def update_ui(status, percent):
-                    progress_status.config(text=status)
-                    progress_var.set(percent)
-                    progress_window.update()
-                
-                result = self.db.recalculate_all_current_balances(update_progress)
-                
-                progress_window.after(0, lambda: finish_recalculation(result))
-                
-            except Exception as e:
-                progress_window.after(0, lambda: finish_recalculation(0, str(e)))
-        
-        def finish_recalculation(success_count, error=None):
-            progress_window.destroy()
-            
-            if error:
-                messagebox.showerror(
-                    "Ошибка перерасчета", 
-                    f"Произошла ошибка:\n{error}",
-                    parent=self
-                )
-            elif success_count > 0:
-                self.load_accounts_into_tree()
-                
-                messagebox.showinfo(
-                    "Перерасчет завершен", 
-                    f"✅ Успешно пересчитано {success_count} счетов\n\n"
-                    "Текущие балансы теперь соответствуют сумме всех транзакций.",
-                    parent=self
-                )
-                
-                self._show_recalculation_details()
-            else:
-                messagebox.showinfo(
-                    "Перерасчет", 
-                    "Не удалось пересчитать балансы.\n"
-                    "Возможно, нет счетов или транзакций.",
-                    parent=self
-                )
-        
-        recalc_thread = threading.Thread(target=run_recalculation, daemon=True)
-        recalc_thread.start()
-        
-    def _load_initial_balance_from_db(self):
-        """Загружает начальный баланс из БД для выбранного счета"""
-        selected_item = self.accounts_tree.focus()
-        if not selected_item:
-            messagebox.showinfo("Загрузка баланса", "Выберите счет для загрузки начального баланса.", parent=self)
-            return
-        
-        account_id = int(selected_item)
-        account_name = self.accounts_tree.item(selected_item, 'values')[0]
-        
-        fresh_account_data = self.db.get_account_by_id(account_id)
-        if not fresh_account_data:
-            messagebox.showerror("Ошибка", f"Не удалось загрузить данные счета '{account_name}' из БД.", parent=self)
-            return
-        
-        fresh_initial_balance = float(fresh_account_data[3])
-        fresh_current_balance = float(fresh_account_data[4])
-        
-        print(f"DEBUG: Fresh data from DB - initial: {fresh_initial_balance}, current: {fresh_current_balance}")
-        
-        if self.db.update_account_initial_balance(account_id, fresh_initial_balance):
-            self.load_accounts_into_tree()
-            
-            messagebox.showinfo(
-                "Баланс обновлен", 
-                f"Счет: {account_name}\n"
-                f"Начальный баланс обновлен: {fresh_initial_balance:.2f} ₽\n"
-                f"Текущий баланс: {fresh_current_balance:.2f} ₽",
-                parent=self
-            )
-        else:
-            messagebox.showerror("Ошибка", "Не удалось обновить баланс в приложении.", parent=self)
-
-    def _fix_balances_after_import(self):
-        """Исправляет балансы после импорта CSV - устанавливает initial = current"""
-        if not messagebox.askyesno(
-            "Исправление балансов", 
-            "Эта функция установит начальный баланс равным текущему для ВСЕХ счетов.\n\n"
-            "Используйте после импорта из CSV, когда начальный баланс = 0, а текущий ≠ 0.\n\n"
-            "Продолжить?",
-            parent=self
-        ):
-            return
-        
-        fixed_count = 0
-        accounts = self.db.get_accounts()
-        
-        for account in accounts:
-            account_id, name, acc_type, initial_balance, current_balance = account
-            
-            if initial_balance == 0.0 and current_balance != 0.0:
-                if self.db.update_account_initial_balance(account_id, current_balance):
-                    fixed_count += 1
-                    print(f"DEBUG: Fixed balances for {name}: initial={current_balance}")
-        
-        self.load_accounts_into_tree()
-        
-        if fixed_count > 0:
-            messagebox.showinfo(
-                "Балансы исправлены", 
-                f"Исправлено {fixed_count} счетов.\n"
-                f"Начальный баланс установлен равным текущему.",
-                parent=self
-            )
-        else:
-            messagebox.showinfo(
-                "Исправление не требуется", 
-                "Нет счетов для исправления.\n"
-                "Все начальные балансы уже соответствуют текущим.",
-                parent=self
-            )
-    
-    def _on_account_select(self, event):
-        print(f"DEBUG: _on_account_select вызван")
-        selected_item = self.accounts_tree.focus()
-        print(f"DEBUG: selected_item = {selected_item}")
-        
-        if selected_item:
-            self.edit_button.config(state="normal")
-            print(f"DEBUG: Кнопка 'Сохранить изменения' активирована")
-            
-            values = self.accounts_tree.item(selected_item, 'values')
-            account_name = values[0]
-            account_type = values[1]
-            
-            self.accounts = self.db.get_accounts()
-            account_data = None
-            
-            for acc in self.accounts:
-                if acc[0] == int(selected_item):
-                    account_data = acc
-                    break
-            
-            if account_data:
-                print(f"DEBUG: Found account data: {account_data}")
-                print(f"DEBUG: Account data length: {len(account_data)}")
-                
-                initial_balance = account_data[3] if len(account_data) > 3 else 0.0
-                current_balance = account_data[4] if len(account_data) > 4 else 0.0
-                
-                self.type_combo_var.set(account_type)
-                self._on_type_change()
-                
-                if account_type == "Credit Card" and len(account_data) > 7:
-                    credit_limit = account_data[5] if len(account_data) > 5 else 0.0
-                    payment_due_day = account_data[6] if len(account_data) > 6 else 1
-                    min_payment_percent = account_data[7] if len(account_data) > 7 else 5.0
-                    
-                    print(f"DEBUG: Credit card data - limit={credit_limit}, day={payment_due_day}, min%={min_payment_percent}")
-                    
-                    self.credit_limit_input.delete(0, tk.END)
-                    self.credit_limit_input.insert(0, f"{credit_limit:.2f}")
-                    
-                    self.payment_day_input.delete(0, tk.END)
-                    self.payment_day_input.insert(0, str(payment_due_day))
-                    
-                    self.min_payment_input.delete(0, tk.END)
-                    self.min_payment_input.insert(0, f"{min_payment_percent:.2f}")
-                else:
-                    self.credit_limit_input.delete(0, tk.END)
-                    self.credit_limit_input.insert(0, "0.0")
-                    self.payment_day_input.delete(0, tk.END)
-                    self.payment_day_input.insert(0, "1")
-                    self.min_payment_input.delete(0, tk.END)
-                    self.min_payment_input.insert(0, "5.0")
-                
-                print(f"DEBUG Selected account {account_name}: initial={initial_balance}, current={current_balance}")
-                
-                self.name_input.delete(0, tk.END)
-                self.name_input.insert(0, account_name)
-                self.initial_balance_input.delete(0, tk.END)
-                self.initial_balance_input.insert(0, f"{initial_balance:.2f}")
-            
-            self.editing_account_id = int(selected_item)
-            self.initial_balance_input.config(state="disabled")
-        else:
-            print(f"DEBUG: No item selected, resetting form")
-            self._reset_form_state()
-
-    def load_accounts_into_tree(self):
-        """Загружает счета из БД в таблицу"""
-        for i in self.accounts_tree.get_children():
-            self.accounts_tree.delete(i)
-        
-        self.accounts = self.db.get_accounts()
-        if self.accounts:
-            for account in self.accounts:
-                acc_id = account[0]
-                name = account[1]
-                acc_type = account[2]
-                initial_balance = account[3] if len(account) > 3 else 0.0
-                current_balance = account[4] if len(account) > 4 else 0.0
-                
-                if acc_type == "Credit Card" and len(account) > 7:
-                    credit_limit = account[5] if len(account) > 5 else 0.0
-                    payment_due_day = account[6] if len(account) > 6 else 1
-                    min_payment_percent = account[7] if len(account) > 7 else 5.0
-                    print(f"DEBUG Loading CREDIT CARD {name}: credit_limit={credit_limit}, due_day={payment_due_day}, min%={min_payment_percent}")
-                
-                print(f"DEBUG Loading account {name}: initial={initial_balance}, current={current_balance}")
-                
-                self.accounts_tree.insert("", "end", iid=acc_id, 
-                                        values=(name, acc_type, f"{current_balance:.2f} ₽"))
-        
-        self.accounts_tree.selection_remove(self.accounts_tree.selection())
-        self._on_account_select(None)
-
-    def _add_account(self):
-        name = self.name_input.get().strip()
-        acc_type = self.type_combo_var.get()
-        initial_balance_str = self.initial_balance_input.get().strip()
-        credit_limit_str = self.credit_limit_input.get().strip()
-        payment_day_str = self.payment_day_input.get().strip()
-        min_payment_str = self.min_payment_input.get().strip()
-        
-        if not name:
-            messagebox.showerror("Ошибка", "Введите название счета.", parent=self)
-            return
-        
-        try:
-            initial_balance = float(initial_balance_str.replace(',', '.'))
-            
-            credit_limit = 0.0
-            payment_due_day = 1
-            min_payment_percent = 5.0
-            
-            if acc_type == "Credit Card":
-                credit_limit = float(credit_limit_str.replace(',', '.')) if credit_limit_str else 0.0
-                payment_due_day = int(payment_day_str) if payment_day_str else 1
-                min_payment_percent = float(min_payment_str.replace(',', '.')) if min_payment_str else 5.0
-                
-                if payment_due_day < 1 or payment_due_day > 31:
-                    messagebox.showerror("Ошибка", "День платежа должен быть от 1 до 31.", parent=self)
-                    return
-                
-                if min_payment_percent < 0 or min_payment_percent > 100:
-                    messagebox.showerror("Ошибка", "Минимальный платеж должен быть от 0 до 100%.", parent=self)
-                    return
-                    
-        except ValueError as e:
-            messagebox.showerror("Ошибка", f"Некорректное число: {e}", parent=self)
-            return
-        
-        if self.db.add_account(name, acc_type, initial_balance, 
-                              credit_limit, payment_due_day, min_payment_percent):
-            self.load_accounts_into_tree()
-            self._reset_form_state()
-        else:
-            messagebox.showerror("Ошибка", "Не удалось добавить счет.", parent=self)
-      
-    def _on_type_change(self, event=None):
-        """Показывает/скрывает поля для кредитной карты."""
-        acc_type = self.type_combo_var.get()
-        
-        if acc_type == "Credit Card":
-            self.credit_limit_input.config(state="normal")
-            self.payment_day_input.config(state="normal")
-            self.min_payment_input.config(state="normal")
-        else:
-            self.credit_limit_input.config(state="disabled")
-            self.payment_day_input.config(state="disabled")
-            self.min_payment_input.config(state="disabled")
-    
-    def _edit_account(self):
-        """Редактирует выбранный счет."""
-        print(f"DEBUG: ===== _edit_account START =====")
-        print(f"DEBUG: editing_account_id = {self.editing_account_id}")
-        print(f"DEBUG: accounts_tree selection: {self.accounts_tree.selection()}")
-        
-        if not self.editing_account_id:
-            messagebox.showwarning("Редактирование", "Выберите счет для редактирования.", parent=self)
-            return
-        
-        name = self.name_input.get().strip()
-        acc_type = self.type_combo_var.get()
-        initial_balance_str = self.initial_balance_input.get().strip()
-        credit_limit_str = self.credit_limit_input.get().strip()
-        payment_day_str = self.payment_day_input.get().strip()
-        min_payment_str = self.min_payment_input.get().strip()
-        
-        print(f"DEBUG: Form data - name='{name}', type='{acc_type}', initial_balance='{initial_balance_str}'")
-        print(f"DEBUG: Credit card fields - credit_limit='{credit_limit_str}', payment_day='{payment_day_str}', min_payment='{min_payment_str}'")
-        
-        if not name:
-            messagebox.showerror("Ошибка", "Введите название счета.", parent=self)
-            return
-        
-        try:
-            initial_balance = float(initial_balance_str.replace(',', '.'))
-            
-            credit_limit = 0.0
-            payment_due_day = 1
-            min_payment_percent = 5.0
-            
-            if acc_type == "Credit Card":
-                credit_limit = float(credit_limit_str.replace(',', '.')) if credit_limit_str else 0.0
-                payment_due_day = int(payment_day_str) if payment_day_str else 1
-                min_payment_percent = float(min_payment_str.replace(',', '.')) if min_payment_str else 5.0
-                
-                if payment_due_day < 1 or payment_due_day > 31:
-                    messagebox.showerror("Ошибка", "День платежа должен быть от 1 до 31.", parent=self)
-                    return
-                
-                if min_payment_percent < 0 or min_payment_percent > 100:
-                    messagebox.showerror("Ошибка", "Минимальный платеж должен быть от 0 до 100%.", parent=self)
-                    return
-        
-        except ValueError as e:
-            messagebox.showerror("Ошибка", f"Некорректное число: {e}", parent=self)
-            return
-        
-        print(f"DEBUG: Checking for existing account with name '{name}'")
-        existing_account = None
-        
-        all_accounts = self.db.get_accounts()
-        for account in all_accounts:
-            if account[1] == name and account[0] != self.editing_account_id:
-                existing_account = account
-                break
-        
-        if existing_account:
-            print(f"DEBUG: Account name conflict - existing ID: {existing_account[0]}, editing ID: {self.editing_account_id}")
-            messagebox.showerror("Ошибка", f"Счет с именем '{name}' уже существует.", parent=self)
-            return
-        
-        print(f"DEBUG: Calling db.update_account...")
-        
-        current_account = None
-        for account in self.accounts:
-            if account[0] == self.editing_account_id:
-                current_account = account
-                break
-        
-        if not current_account:
-            messagebox.showerror("Ошибка", "Не удалось найти данные текущего счета.", parent=self)
-            return
-        
-        result = self.db.update_account(
-            self.editing_account_id,
-            name,
-            acc_type,
-            initial_balance,
-            credit_limit,
-            payment_due_day,
-            min_payment_percent
-        )
-        
-        print(f"DEBUG: db.update_account returned: {result}")
-        
-        if result:
-            print(f"DEBUG: Update successful!")
-            self.show_status_message(f"Счет '{name}' успешно обновлен")
-            
-            self.load_accounts_into_tree()
-            self._reset_form_state()
-            
-            if hasattr(self.master, '_post_dialog_update'):
-                self.master._post_dialog_update()
-        else:
-            print(f"DEBUG: Update failed!")
-            messagebox.showerror("Ошибка", f"Не удалось обновить счет '{name}'.", parent=self)
-        
-        print(f"DEBUG: ===== _edit_account END =====")
-
-    def _delete_selected_account(self):
-        """Удаляет выбранные счета с проверкой операций"""
-        selected_items = self.accounts_tree.selection()
-        if not selected_items:
-            messagebox.showinfo("Удаление", "Выберите счета для удаления.", parent=self)
-            return
-        
-        success_count = 0
-        failed_count = 0
-        blocked_count = 0
-        
-        for item_id in selected_items:
-            try:
-                account_id = int(item_id)
-                account_name = self.accounts_tree.item(item_id, 'values')[0]
-                
-                result = self.db.delete_account(account_id)
-                
-                if result is True:
-                    success_count += 1
-                    print(f"DEBUG: Successfully deleted account {account_name}")
-                elif isinstance(result, dict) and not result["can_delete"]:
-                    blocked_count += 1
-                    self._show_cannot_delete_message(result)
-                else:
-                    failed_count += 1
-                    print(f"DEBUG: Failed to delete account {account_name}")
-                    
-            except ValueError:
-                failed_count += 1
-        
-        self._show_delete_result(success_count, failed_count, blocked_count)
-        self.load_accounts_into_tree()
-
-    def _show_cannot_delete_message(self, result_info):
-        """Показывает сообщение о невозможности удаления счета"""
-        operations_details = []
-        if result_info["transactions_count"] > 0:
-            operations_details.append(f"• Транзакций: {result_info['transactions_count']}")
-        if result_info["transfers_from_count"] > 0:
-            operations_details.append(f"• Исходящих переводов: {result_info['transfers_from_count']}")
-        if result_info["transfers_to_count"] > 0:
-            operations_details.append(f"• Входящих переводов: {result_info['transfers_to_count']}")
-        if result_info["loans_count"] > 0:
-            operations_details.append(f"• Связанных займов: {result_info['loans_count']}")
-        
-        operations_text = "\n".join(operations_details)
-        
-        messagebox.showwarning(
-            "Нельзя удалить счет", 
-            f"❌ Счет '{result_info['account_name']}' нельзя удалить.\n\n"
-            f"На счете зафиксированы финансовые операции:\n"
-            f"{operations_text}\n\n"
-            f"📊 Всего операций: {result_info['total_operations']}\n\n"
-            f"Для удаления счета необходимо сначала удалить все связанные операции "
-            f"или перенести их на другие счета.",
-            parent=self
-        )
-
-    def _show_delete_result(self, success_count, failed_count, blocked_count):
-        """Показывает итоговый результат удаления"""
-        messages = []
-        if success_count > 0:
-            messages.append(f"✅ Успешно удалено: {success_count}")
-        if blocked_count > 0:
-            messages.append(f"🚫 Нельзя удалить (есть операции): {blocked_count}")
-        if failed_count > 0:
-            messages.append(f"❌ Ошибка удаления: {failed_count}")
-        
-        if messages:
-            messagebox.showinfo("Результат удаления", "\n".join(messages), parent=self)
-
-    def _reset_form_state(self):
-        """Сбрасывает поля формы и состояние кнопок."""
-        self.name_input.delete(0, tk.END)
-        self.type_combo.set("Bank Account")
-        self.initial_balance_input.delete(0, tk.END)
-        self.initial_balance_input.insert(0, "0.0")
-        self.initial_balance_input.config(state="normal")
         self.editing_account_id = None
-        self.edit_button.config(state="disabled")
-        self.add_button.config(state="normal")
-     
-    def _show_account_stats(self):
-        """Показывает подробную статистику по выбранному счету"""
-        selected_item = self.accounts_tree.selection()
-        if not selected_item:
-            messagebox.showinfo("Статистика", "Выберите счет для просмотра статистики.", parent=self)
-            return
+        self.current_accounts = []
         
-        account_id = int(selected_item[0])
-        account_name = self.accounts_tree.item(selected_item[0], 'values')[0]
+        self._init_ui()
+        self._load_accounts()
         
-        stats = self._calculate_account_statistics(account_id)
-        stats_text = self._format_account_stats_message(account_name, stats)
-        self._show_stats_dialog(account_name, stats_text)
+    def _init_database(self, db):
+        """
+        Инициализирует базу данных в зависимости от типа переданного объекта.
+        Сохраняет self.database как экземпляр Database (новой архитектуры).
+        """
+        from core.database import DatabaseManager
+        from core.db import Database
+        
+        if isinstance(db, Database):
+            self.database = db
+            logger.debug("Используется новая база данных (Database)")
+        elif isinstance(db, DatabaseManager):
+            # Создаем новый экземпляр Database с тем же путем
+            self.database = Database('budget.db')
+            logger.debug("Создана новая база данных из DatabaseManager")
+        else:
+            raise TypeError(f"Неизвестный тип базы данных: {type(db)}")
+    
+    def _connect_presenter_signals(self):
+        """Подключает сигналы презентера к слою View."""
+        self.presenter.accounts_loaded.connect(self._on_accounts_loaded)
+        self.presenter.account_added.connect(self._on_account_added)
+        self.presenter.account_updated.connect(self._on_account_updated)
+        self.presenter.account_deleted.connect(self._on_account_deleted)
+        self.presenter.error_occurred.connect(self._on_presenter_error)
+        self.presenter.validation_failed.connect(self._on_validation_failed)
+    
+    # --- Обработчики сигналов презентера ---
+    
+    def _on_accounts_loaded(self, accounts):
+        """Обрабатывает загруженные счета от презентера."""
+        self.current_accounts = accounts  # список объектов Account
+        self._refresh_table_with_accounts(accounts)
+    
+    def _on_account_added(self, account):
+        """Обрабатывает добавление нового счета."""
+        # Добавляем счет в текущий список
+        self.current_accounts.append(account)
+        # Обновляем таблицу
+        self._refresh_table_with_accounts(self.current_accounts)
+        # Показываем статус
+        self.show_status(f"Счет '{account.name}' добавлен", "success")
+        # Эмитируем сигнал обновления данных для внешних потребителей
+        self.data_updated.emit()
+    
+    def _on_account_updated(self, account):
+        """Обрабатывает обновление счета."""
+        # Обновляем счет в текущем списке
+        for i, acc in enumerate(self.current_accounts):
+            if acc.id == account.id:
+                self.current_accounts[i] = account
+                break
+        # Обновляем таблицу
+        self._refresh_table_with_accounts(self.current_accounts)
+        # Показываем статус
+        self.show_status(f"Счет '{account.name}' обновлен", "success")
+        # Эмитируем сигнал обновления данных
+        self.data_updated.emit()
+    
+    def _on_account_deleted(self, account_id):
+        """Обрабатывает удаление счета."""
+        # Удаляем счет из текущего списка
+        self.current_accounts = [acc for acc in self.current_accounts if acc.id != account_id]
+        # Обновляем таблицу
+        self._refresh_table_with_accounts(self.current_accounts)
+        # Показываем статус
+        self.show_status(f"Счет удален", "success")
+        # Эмитируем сигнал обновления данных
+        self.data_updated.emit()
+    
+    def _on_presenter_error(self, error_msg):
+        """Обрабатывает ошибку от презентера."""
+        self.show_status(error_msg, "error")
+        QMessageBox.warning(self, "Ошибка", error_msg)
+    
+    def _on_validation_failed(self, errors):
+        """Обрабатывает ошибки валидации."""
+        error_text = "\n".join([f"{field}: {msg}" for field, msg in errors.items()])
+        self.show_status("Ошибки валидации", "error")
+        QMessageBox.warning(self, "Ошибки валидации", error_text)
+    
+    def _refresh_table_with_accounts(self, accounts):
+        """Обновляет таблицу на основе переданного списка счетов."""
+        # Временно используем старый метод _refresh_table, но с переданными accounts
+        # Для простоты сохраним accounts в self.current_accounts и вызовем _refresh_table,
+        # который должен использовать self.current_accounts.
+        # Однако _refresh_table загружает данные из БД, поэтому нужно его модифицировать.
+        # Пока что оставим как есть, но позже заменим.
+        self.current_accounts = accounts
+        self._refresh_table()
+    
+    def _load_styles(self):
+        """Загружает стили из внешнего QSS файла"""
+        try:
+            import os
+            # Используем путь из конфигурации
+            styles_dir = config.STYLES_DIR
+            style_path = os.path.join(styles_dir, 'account_dialog.qss')
+            # Нормализуем путь относительно текущей рабочей директории
+            style_path = os.path.normpath(style_path)
+            if os.path.exists(style_path):
+                with open(style_path, 'r', encoding='utf-8') as f:
+                    stylesheet = f.read()
+                self.setStyleSheet(stylesheet)
+            else:
+                # Fallback к встроенным стилям, если файл не найден
+                self.setStyleSheet("""
+                    QDialog {
+                        background-color: #f8f9fa;
+                        font-family: 'Segoe UI', Arial, sans-serif;
+                        font-size: 12px;
+                    }
+                """)
+                logger.warning(f"Файл стилей не найден: {style_path}")
+        except Exception as e:
+            logger.error(f"Ошибка загрузки стилей: {e}")
+            # Используем минимальные стили
+            self.setStyleSheet("QDialog { background-color: #f8f9fa; }")
 
-    def _calculate_account_statistics(self, account_id):
-        """Вычисляет статистику по счету с обработкой ошибок"""
-        stats = {
-            'current_balance': 0,
-            'total_income': 0,
-            'total_expense': 0,
-            'transaction_count': 0,
-            'transfers_in_count': 0,
-            'transfers_out_count': 0,
-            'recent_activity': [],
-            'top_categories': [],
-            'account_name': 'Неизвестно'
+    def _init_ui(self):
+        """Инициализация интерфейса"""
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # 1. Таблица счетов
+        tree_group = QGroupBox("Счета")
+        tree_layout = QVBoxLayout(tree_group)
+        
+        self.accounts_tree = QTreeWidget()
+        self.accounts_tree.setHeaderLabels(["Название", "Тип", "Баланс"])
+        
+        # Настройка колонок
+        header = self.accounts_tree.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        
+        self.accounts_tree.setAlternatingRowColors(True)
+        self.accounts_tree.itemSelectionChanged.connect(self._on_account_select)
+        
+        # Контекстное меню
+        self.accounts_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.accounts_tree.customContextMenuRequested.connect(self._show_context_menu)
+        
+        tree_layout.addWidget(self.accounts_tree)
+        main_layout.addWidget(tree_group)
+        
+        # 2. Форма добавления/редактирования
+        form_group = QGroupBox("Добавить/Редактировать счет")
+        form_layout = QGridLayout(form_group)
+        
+        row = 0
+        
+        # Название
+        form_layout.addWidget(QLabel("Название:"), row, 0)
+        self.name_input = QLineEdit()
+        self.name_input.setFixedHeight(26)
+        form_layout.addWidget(self.name_input, row, 1)
+        row += 1
+        
+        # Тип
+        self.type_label = QLabel("Тип:")
+        form_layout.addWidget(self.type_label, row, 0)
+        self.type_combo = QComboBox()
+        self.type_combo.setFixedHeight(26)
+        self.type_combo.addItems(["Cash", "Bank Account", "Credit Card"])
+        self.type_combo.currentTextChanged.connect(self._on_type_change)
+        form_layout.addWidget(self.type_combo, row, 1)
+        row += 1
+        
+        # Начальный баланс
+        self.initial_balance_label = QLabel("Начальный баланс:")
+        form_layout.addWidget(self.initial_balance_label, row, 0)
+        self.initial_balance_input = QLineEdit("0.00")
+        self.initial_balance_input.setFixedHeight(26)
+        form_layout.addWidget(self.initial_balance_input, row, 1)
+        row += 1
+        
+        # Кредитный лимит
+        self.credit_limit_label = QLabel("Кредитный лимит:")
+        form_layout.addWidget(self.credit_limit_label, row, 0)
+        self.credit_limit_input = QLineEdit("0.00")
+        self.credit_limit_input.setFixedHeight(26)
+        form_layout.addWidget(self.credit_limit_input, row, 1)
+        row += 1
+        
+        # День платежа
+        self.payment_day_label = QLabel("День платежа (1-31):")
+        form_layout.addWidget(self.payment_day_label, row, 0)
+        self.payment_day_input = QLineEdit("1")
+        self.payment_day_input.setFixedHeight(26)
+        form_layout.addWidget(self.payment_day_input, row, 1)
+        row += 1
+        
+        # Мин. платеж
+        self.min_payment_label = QLabel("Мин. платеж (%):")
+        form_layout.addWidget(self.min_payment_label, row, 0)
+        self.min_payment_input = QLineEdit("5.0")
+        self.min_payment_input.setFixedHeight(26)
+        form_layout.addWidget(self.min_payment_input, row, 1)
+        row += 1
+        
+        # Валюта
+        form_layout.addWidget(QLabel("Валюта:"), row, 0)
+        self.currency_combo = QComboBox()
+        self.currency_combo.setFixedHeight(26)
+        self.currency_combo.addItems(["RUB", "USD", "EUR", "GBP", "CNY", "JPY"])
+        form_layout.addWidget(self.currency_combo, row, 1)
+        row += 1
+        
+        # Кнопки формы
+        button_layout = QHBoxLayout()
+        
+        self.add_button = ColoredButton("Добавить", "#4CAF50")
+        self.add_button.clicked.connect(self._add_account)
+        button_layout.addWidget(self.add_button)
+        
+        self.edit_button = CompactButton("Сохранить")
+        self.edit_button.clicked.connect(self._edit_account)
+        self.edit_button.setEnabled(False)
+        button_layout.addWidget(self.edit_button)
+        
+        self.cancel_button = CompactButton("Отмена")
+        self.cancel_button.clicked.connect(self._reset_form)
+        self.cancel_button.setEnabled(False)
+        button_layout.addWidget(self.cancel_button)
+        
+        form_layout.addLayout(button_layout, row, 0, 1, 2)
+        
+        main_layout.addWidget(form_group)
+        
+        # 4. Кнопки управления диалогом
+        dialog_buttons = QDialogButtonBox()
+        close_button = dialog_buttons.addButton("Закрыть", QDialogButtonBox.RejectRole)
+        close_button.clicked.connect(self.accept)
+        
+        main_layout.addWidget(dialog_buttons)
+        
+        # 5. Статус-бар
+        self.status_bar = QLabel("Готово")
+        self.status_bar.setProperty("class", "status")
+        self.status_bar.setFixedHeight(26)
+        main_layout.addWidget(self.status_bar)
+        
+        self.setLayout(main_layout)
+        
+        # Инициализация полей кредитной карты
+        self._on_type_change()
+        
+    def _on_type_change(self):
+        """Показывает/скрывает поля для кредитной карты"""
+        acc_type = self.type_combo.currentText()
+        is_credit_card = acc_type == "Credit Card"
+        
+        # Показываем/скрываем поля
+        self.credit_limit_label.setVisible(is_credit_card)
+        self.credit_limit_input.setVisible(is_credit_card)
+        self.payment_day_label.setVisible(is_credit_card)
+        self.payment_day_input.setVisible(is_credit_card)
+        self.min_payment_label.setVisible(is_credit_card)
+        self.min_payment_input.setVisible(is_credit_card)
+    
+    def _load_accounts(self):
+        """Загружает счета через презентер."""
+        self.presenter.load_accounts(active_only=True, include_system=True)
+        
+    def _tuple_to_dict(self, account_data):
+        """Преобразует данные счета в словарь (для совместимости)"""
+        # Если уже словарь, возвращаем как есть
+        if isinstance(account_data, dict):
+            return account_data
+            
+        # Если кортеж или список, преобразуем в словарь
+        # Это запасной вариант на случай неправильных данных
+        account_dict = {
+            'id': 0,
+            'name': 'Неизвестный',
+            'type': 'Cash',
+            'initial_balance': 0.0,
+            'current_balance': 0.0,
+            'currency': 'RUB',
+            'is_system': False
         }
         
         try:
-            account = self.db.get_account_by_id(account_id)
-            if account:
-                stats['current_balance'] = float(account[4]) if account[4] is not None else 0.0
-                stats['account_name'] = account[1]
-            
-            transactions = self.db.get_transactions(account_id=account_id)
-            stats['transaction_count'] = len(transactions) if transactions else 0
-            
-            if transactions:
-                for transaction in transactions:
-                    try:
-                        amount_str = transaction[2]
-                        amount = float(amount_str) if amount_str is not None else 0.0
-                        
-                        if amount > 0:
-                            stats['total_income'] += amount
-                        else:
-                            stats['total_expense'] += abs(amount)
-                    except (ValueError, TypeError, IndexError) as e:
-                        print(f"DEBUG: Error processing transaction {transaction}: {e}")
-                        continue
-                
-                try:
-                    recent_transactions = sorted(transactions, key=lambda x: x[1] if x[1] else "", reverse=True)[:5]
-                    stats['recent_activity'] = recent_transactions
-                except Exception as e:
-                    print(f"DEBUG: Error sorting recent transactions: {e}")
-                    stats['recent_activity'] = transactions[:5]
-            
-            if transactions and stats['total_expense'] > 0:
-                try:
-                    expense_categories = {}
-                    for transaction in transactions:
-                        try:
-                            amount_str = transaction[2]
-                            amount = float(amount_str) if amount_str is not None else 0.0
-                            category = transaction[4] or "Без категории"
-                            
-                            if amount < 0:
-                                expense_categories[category] = expense_categories.get(category, 0) + abs(amount)
-                        except (ValueError, TypeError, IndexError) as e:
-                            print(f"DEBUG: Error processing category for transaction {transaction}: {e}")
-                            continue
-                    
-                    if expense_categories:
-                        stats['top_categories'] = sorted(expense_categories.items(), key=lambda x: x[1], reverse=True)[:5]
-                except Exception as e:
-                    print(f"DEBUG: Error calculating top categories: {e}")
-            
-            try:
-                transfers = self.db.get_transfers(account_id=account_id)
-                if transfers:
-                    for transfer in transfers:
-                        try:
-                            transfer_id, date, amount, from_acc, to_acc, description = transfer
-                            
-                            if to_acc == stats['account_name']:
-                                stats['transfers_in_count'] += 1
-                            elif from_acc == stats['account_name']:
-                                stats['transfers_out_count'] += 1
-                        except (ValueError, TypeError, IndexError) as e:
-                            print(f"DEBUG: Error processing transfer {transfer}: {e}")
-                            continue
-            except Exception as e:
-                print(f"DEBUG: Error getting transfers: {e}")
-                
+            if isinstance(account_data, (tuple, list)):
+                if len(account_data) > 0:
+                    account_dict['id'] = account_data[0]
+                if len(account_data) > 1:
+                    account_dict['name'] = account_data[1] or 'Без названия'
+                if len(account_data) > 2:
+                    account_dict['type'] = account_data[2] or 'Cash'
+                if len(account_data) > 3:
+                    account_dict['initial_balance'] = float(account_data[3]) if account_data[3] is not None else 0.0
+                if len(account_data) > 4:
+                    account_dict['current_balance'] = float(account_data[4]) if account_data[4] is not None else 0.0
+                if len(account_data) > 12:
+                    account_dict['currency'] = account_data[12] or 'RUB'
+                    account_dict['is_system'] = bool(account_data[11]) if len(account_data) > 11 else False
         except Exception as e:
-            print(f"DEBUG: Major error in account statistics: {e}")
+            logger.error(f"Ошибка преобразования account_data в словарь: {e}")
+            
+        return account_dict
         
-        return stats
-
-    def _format_account_stats_message(self, account_name, stats):
-        """Форматирует сообщение со статистикой"""
-        message = f"📊 Статистика счета: {account_name}\n\n"
-        message += f"💰 Текущий баланс: {stats['current_balance']:.2f} ₽\n"
-        message += f"📈 Всего доходов: {stats['total_income']:.2f} ₽\n"
-        message += f"📉 Всего расходов: {stats['total_expense']:.2f} ₽\n"
-        message += f"🔄 Чистый поток: {stats['total_income'] - stats['total_expense']:.2f} ₽\n\n"
+    def _on_account_select(self):
+        """Обработчик выбора счета"""
+        selected_items = self.accounts_tree.selectedItems()
         
-        message += f"📋 Количество операций:\n"
-        message += f"   • Транзакций: {stats['transaction_count']}\n"
-        message += f"   • Входящих переводов: {stats['transfers_in_count']}\n"
-        message += f"   • Исходящих переводов: {stats['transfers_out_count']}\n"
-        message += f"   • Всего: {stats['transaction_count'] + stats['transfers_in_count'] + stats['transfers_out_count']}\n\n"
-        
-        if stats['top_categories']:
-            message += "🏆 Топ категорий расходов:\n"
-            for category, amount in stats['top_categories']:
-                percentage = (amount / stats['total_expense'] * 100) if stats['total_expense'] > 0 else 0
-                message += f"   • {category}: {amount:.2f} ₽ ({percentage:.1f}%)\n"
-            message += "\n"
-        
-        if stats['recent_activity']:
-            message += "🕒 Последние операции:\n"
-            for trans in stats['recent_activity'][:3]:
-                if len(trans) >= 9:
-                    trans_id, date, amount, trans_type, category, description, acc_name, acc_id, quantity = trans
-                elif len(trans) == 8:
-                    trans_id, date, amount, trans_type, category, description, acc_name, acc_id = trans
-                    quantity = 1.0
-                
-                amount_str = f"+{amount:.2f}" if float(amount) > 0 else f"{amount:.2f}"
-                qty_info = f" ({quantity} ед)" if quantity != 1.0 else ""
-                message += f"   • {date}: {amount_str} ₽ ({category or 'Без категории'}){qty_info}\n"
-        
-        return message
-
-    def _show_stats_dialog(self, account_name, stats_text):
-        """Показывает статистику в диалоговом окне с прокруткой"""
-        stats_window = tk.Toplevel(self)
-        stats_window.title(f"Статистика счета: {account_name}")
-        stats_window.geometry("500x400")        
-        stats_window.transient(self)
-        stats_window.grab_set()
-        
-        text_frame = ttk.Frame(stats_window)
-        text_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        text_widget = tk.Text(text_frame, wrap="word", font=("TkDefaultFont", 10))
-        text_widget.insert("1.0", stats_text)
-        text_widget.config(state="disabled")
-        
-        scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text_widget.yview)
-        text_widget.configure(yscrollcommand=scrollbar.set)
-        
-        text_widget.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        
-        ttk.Button(stats_window, text="Закрыть", command=stats_window.destroy).pack(pady=10)
-        
-        from widgets.window_utils import center_window_relative
-        center_window_relative(stats_window, self)
-        stats_window.focus_set()
-
-    def _refresh_account_balance(self):
-        """Обновляет баланс выбранного счета"""
-        selected_item = self.accounts_tree.selection()
-        if not selected_item:
-            messagebox.showinfo("Обновление", "Выберите счет для обновления.", parent=self)
+        if not selected_items:
+            self._reset_form()
             return
         
-        account_id = int(selected_item[0])
-        account_name = self.accounts_tree.item(selected_item[0], 'values')[0]
+        item = selected_items[0]
+        account_id = item.data(0, Qt.UserRole)
+        is_system = item.data(0, Qt.UserRole + 1)
         
-        fresh_account_data = self.db.get_account_by_id(account_id)
-        if not fresh_account_data:
-            messagebox.showerror("Ошибка", f"Не удалось загрузить данные счета '{account_name}'.", parent=self)
+        # Находим данные счета
+        account = None
+        for acc in self.current_accounts:
+            if acc.id == account_id:
+                account = acc
+                break
+        
+        if not account:
+            self.show_status("Данные счета не найдены", "error")
             return
         
-        fresh_initial_balance = float(fresh_account_data[3])
-        fresh_current_balance = float(fresh_account_data[4])
+        # Заполняем форму
+        self.name_input.setText(account.name)
         
-        print(f"DEBUG: Fresh data for {account_name}: initial={fresh_initial_balance}, current={fresh_current_balance}")
-        
-        self.load_accounts_into_tree()
-        
-        messagebox.showinfo(
-            "Баланс обновлен", 
-            f"Счет: {account_name}\n"
-            f"Начальный баланс: {fresh_initial_balance:.2f} ₽\n"
-            f"Текущий баланс: {fresh_current_balance:.2f} ₽",
-            parent=self
-        )
-
-    def _show_account_chart(self):
-        """Показывает график операций по счету"""
-        messagebox.showinfo("В разработке", "График операций по счету в разработке", parent=self)
-    
-    def show_status_message(self, message, duration_ms=3000):
-        """Показывает сообщение в статусе родительского окна"""
-        if hasattr(self.master, 'show_status_message'):
-            self.master.show_status_message(message, duration_ms)
+        # Для системных счетов (Counterparty) скрываем поле типа
+        if account.type == 'Counterparty' or account.is_system:
+            self.type_label.setVisible(False)
+            self.type_combo.setVisible(False)
         else:
-            print(f"STATUS: {message}")
+            self.type_label.setVisible(True)
+            self.type_combo.setVisible(True)
+            self.type_combo.setCurrentText(account.type)
+            self.type_combo.setEnabled(True)
+            
+        # Начальный баланс только для просмотра при редактировании
+        self.initial_balance_label.setText(f"Начальный баланс: {account.initial_balance:.2f}")
+        self.initial_balance_input.setVisible(False)
+        
+        self.currency_combo.setCurrentText(account.currency or 'RUB')
+        
+        # Для кредитных карт
+        if account.type == 'Credit Card':
+            self.credit_limit_input.setText(f"{account.credit_limit or 0.0:.2f}")
+            self.payment_day_input.setText(str(account.payment_due_day or 1))
+            self.min_payment_input.setText(f"{account.min_payment_percent or 5.0:.2f}")
+        
+        # Переключаем режим на редактирование
+        self.editing_account_id = account_id
+        self.add_button.setEnabled(False)
+        self.edit_button.setEnabled(True)
+        self.cancel_button.setEnabled(True)
+        
+        self.show_status(f"Редактирование: {account.name}", "info")
+
+    def _refresh_table(self, accounts=None):
+        """
+        Обновляет таблицу счетов.
+        
+        Args:
+            accounts: список объектов Account. Если None, используется self.current_accounts.
+        """
+        try:
+            # Показываем статус загрузки
+            self.show_status("Обновление таблицы...", "info")
+            QApplication.processEvents()
+            
+            # Сохраняем текущее состояние
+            scroll_pos = self.accounts_tree.verticalScrollBar().value()
+            selected_ids = []
+            selected_items = self.accounts_tree.selectedItems()
+            for item in selected_items:
+                selected_ids.append(item.data(0, Qt.UserRole))
+            
+            # Очищаем дерево
+            self.accounts_tree.clear()
+            
+            # Определяем данные для отображения
+            if accounts is not None:
+                self.current_accounts = accounts
+            display_accounts = self.current_accounts
+            
+            if not display_accounts:
+                self.show_status("Нет счетов", "info")
+                return
+            
+            # Отключаем обновление виджета для ускорения
+            self.accounts_tree.setUpdatesEnabled(False)
+            
+            # Заполняем таблицу порциями для лучшей отзывчивости
+            for i, account in enumerate(display_accounts):
+                # Создаем элемент
+                item = QTreeWidgetItem([
+                    account.name or 'Без названия',
+                    account.type or 'Cash',
+                    f"{account.current_balance or 0.0:.2f} {account.currency or 'RUB'}"
+                ])
+                
+                # Настройка внешнего вида
+                balance = account.current_balance or 0.0
+                if balance < 0:
+                    item.setForeground(2, QColor("#dc3545"))
+                elif balance > 0:
+                    item.setForeground(2, QColor("#28a745"))
+                
+                if account.is_system:
+                    item.setForeground(0, QColor("#6c757d"))
+                
+                item.setData(0, Qt.UserRole, account.id or 0)
+                item.setData(0, Qt.UserRole + 1, account.is_system or False)
+                
+                # Восстанавливаем выделение
+                if account.id in selected_ids:
+                    item.setSelected(True)
+                
+                self.accounts_tree.addTopLevelItem(item)
+                
+                # Обновляем прогресс каждые 50 счетов
+                if i % 50 == 0:
+                    QApplication.processEvents()
+            
+            # Включаем обновление виджета
+            self.accounts_tree.setUpdatesEnabled(True)
+            
+            # Восстанавливаем скролл
+            self.accounts_tree.verticalScrollBar().setValue(scroll_pos)
+            
+            # Обновляем таблицу
+            self.accounts_tree.viewport().update()
+            
+            self.show_status(f"Отображено: {len(display_accounts)} счетов", "success")
+            
+        except Exception as e:
+            self.show_status(f"Ошибка: {str(e)[:100]}", "error")
+            logger.error(f"Ошибка обновления таблицы: {e}")
+        
+    def _add_account(self):
+        """Добавляет новый счет"""
+        try:
+            # Валидация
+            name = self.name_input.text().strip()
+            if not name:
+                self.show_status("Введите название счета", "warning")
+                return
+            
+            acc_type = self.type_combo.currentText()
+            
+            # Проверка дубликатов (опционально, для быстрого ответа)
+            for acc in self.current_accounts:
+                if acc.name.lower() == name.lower():
+                    self.show_status(f"Счет '{name}' уже существует", "error")
+                    return
+            
+            # Получение данных
+            initial_balance = parse_float(self.initial_balance_input.text(), raise_error=True)
+            
+            # Подготовка данных для БД
+            account_data = {
+                'name': name,
+                'type': acc_type,
+                'initial_balance': initial_balance,
+                'current_balance': initial_balance,
+                'currency': self.currency_combo.currentText(),
+                'is_active': True,
+                'is_system': False
+            }
+            
+            # Для кредитных карт
+            if acc_type == "Credit Card":
+                account_data['credit_limit'] = parse_float(self.credit_limit_input.text(), raise_error=True)
+                account_data['payment_due_day'] = parse_int(self.payment_day_input.text(), raise_error=True)
+                account_data['min_payment_percent'] = parse_float(self.min_payment_input.text(), raise_error=True)
+            
+            # Вызов презентера
+            self.presenter.add_account(account_data)
+            
+        except ValueError as e:
+            self.show_status(f"Некорректное число: {str(e)}", "error")
+        except Exception as e:
+            self.show_status(f"Ошибка: {str(e)}", "error")
+            logger.error(f"Ошибка добавления счета: {e}")
+
+    def _edit_account(self):
+        """Редактирует существующий счет"""
+        if not self.editing_account_id:
+            self.show_status("Не выбран счет для редактирования", "warning")
+            return
+        
+        try:
+            # Находим счет для проверки системности
+            current_account = None
+            for acc in self.current_accounts:
+                if acc.id == self.editing_account_id:
+                    current_account = acc
+                    break
+            
+            if not current_account:
+                self.show_status("Счет не найден", "error")
+                return
+            
+            is_system = current_account.is_system or False
+            
+            # Валидация
+            name = self.name_input.text().strip()
+            if not name:
+                self.show_status("Введите название счета", "warning")
+                return
+            
+            # Проверка дубликатов
+            for acc in self.current_accounts:
+                if (acc.name.lower() == name.lower() and
+                    acc.id != self.editing_account_id):
+                    self.show_status(f"Счет '{name}' уже существует", "error")
+                    return
+            
+            # Подготовка данных для обновления
+            account_data = {
+                'name': name,
+                'currency': self.currency_combo.currentText()
+            }
+            
+            # Для несистемных счетов можно менять тип
+            if not is_system and self.type_combo.isVisible():
+                account_data['type'] = self.type_combo.currentText()
+                
+                # Для кредитных карт
+                if account_data['type'] == "Credit Card":
+                    account_data['credit_limit'] = parse_float(self.credit_limit_input.text(), raise_error=True)
+                    account_data['payment_due_day'] = parse_int(self.payment_day_input.text(), raise_error=True)
+                    account_data['min_payment_percent'] = parse_float(self.min_payment_input.text(), raise_error=True)
+                else:
+                    # Для не-кредитных карт обнуляем кредитные поля
+                    account_data['credit_limit'] = 0.0
+                    account_data['payment_due_day'] = 1
+                    account_data['min_payment_percent'] = 5.0
+            
+            # Вызов презентера
+            self.presenter.update_account(self.editing_account_id, account_data)
+            
+        except ValueError as e:
+            self.show_status(f"Некорректное число: {str(e)}", "error")
+        except Exception as e:
+            self.show_status(f"Ошибка: {str(e)}", "error")
+            logger.error(f"Ошибка редактирования счета: {e}")
+
+           
+    def _reset_form(self):
+        """Сбрасывает форму в исходное состояние"""
+        self.name_input.clear()
+        self.type_combo.setCurrentIndex(1)  # Bank Account
+        self.type_label.setVisible(True)
+        self.type_combo.setVisible(True)
+        self.type_combo.setEnabled(True)
+        
+        # Восстанавливаем начальный баланс как редактируемое поле
+        self.initial_balance_label.setText("Начальный баланс:")
+        self.initial_balance_input.setVisible(True)
+        self.initial_balance_input.setText("0.00")
+        
+        self.credit_limit_input.setText("0.00")
+        self.payment_day_input.setText("1")
+        self.min_payment_input.setText("5.0")
+        self.currency_combo.setCurrentText("RUB")
+        
+        self.editing_account_id = None
+        self.add_button.setEnabled(True)
+        self.edit_button.setEnabled(False)
+        self.cancel_button.setEnabled(False)
+        
+        # Снимаем выделение в дереве
+        self.accounts_tree.clearSelection()
+        self._on_type_change()
+        
+    def _show_context_menu(self, position):
+        """Показывает контекстное меню"""
+        menu = QMenu(self)
+        
+        # Только если что-то выбрано
+        selected_items = self.accounts_tree.selectedItems()
+        if not selected_items:
+            return
+        
+        item = selected_items[0]
+        account_id = item.data(0, Qt.UserRole)
+        is_system = item.data(0, Qt.UserRole + 1)
+        
+        # Редактировать
+        edit_action = menu.addAction("✏️ Редактировать")
+        edit_action.triggered.connect(self._on_account_select)
+        
+        # Удалить (только для несистемных счетов)
+        if not is_system:
+            delete_action = menu.addAction("🗑️ Удалить")
+            delete_action.triggered.connect(self._delete_selected_accounts)
+        
+        menu.addSeparator()
+        
+        # Статистика
+        stats_action = menu.addAction("📊 Статистика")
+        stats_action.triggered.connect(self._show_account_stats)
+
+        menu.addSeparator()
+        
+        # Обновить список
+        refresh_action = menu.addAction("🔄 Обновить список")
+        refresh_action.triggered.connect(self._load_accounts)
+        
+        menu.exec_(self.accounts_tree.viewport().mapToGlobal(position))
+    
+    def _delete_selected_accounts(self):
+        """Удаляет выбранные счета"""
+        selected_items = self.accounts_tree.selectedItems()
+        if not selected_items:
+            self.show_status("Выберите счета для удаления", "warning")
+            return
+        
+        # Фильтруем только несистемные счета
+        non_system_items = []
+        for item in selected_items:
+            if not item.data(0, Qt.UserRole + 1):  # несистемный
+                non_system_items.append(item)
+        
+        if not non_system_items:
+            self.show_status("Выбранные счета являются системными и не могут быть удалены", "warning")
+            return
+        
+        # Подтверждение
+        reply = QMessageBox.question(
+            self,
+            "Подтверждение",
+            f"Удалить {len(non_system_items)} счетов?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        success_count = 0
+        blocked_count = 0
+        error_count = 0
+        
+        # Используем список для удаления
+        items_to_delete = non_system_items.copy()
+        
+        for item in items_to_delete:
+            account_id = item.data(0, Qt.UserRole)
+            account_name = item.text(0)
+            
+            # Вызов презентера
+            result = self.presenter.delete_account(account_id)
+            
+            if result.get('success', False):
+                success_count += 1
+                self.show_status(f"Удален: {account_name}", "info")
+            else:
+                # Счет имеет операции - нельзя удалить
+                if not result.get('can_delete', True):
+                    blocked_count += 1
+                    # Показываем сообщение о том, что счет имеет операции
+                    self._show_cannot_delete_message({
+                        'account_name': account_name,
+                        'operations': result.get('operations', []),
+                        'total_operations': result.get('total_operations', 0)
+                    })
+                else:
+                    error_count += 1
+                    self.show_status(f"Ошибка удаления счета '{account_name}': {result.get('message', 'Неизвестная ошибка')}", "error")
+        
+        # Показываем итог
+        self._show_delete_result(success_count, error_count, blocked_count)
+    
+    def _show_cannot_delete_message(self, result_info):
+        """Показывает сообщение о невозможности удаления"""
+        try:
+            account_name = result_info.get('account_name', 'Счет')
+            operations = result_info.get('operations', [])
+            total_operations = result_info.get('total_operations', 0)
+            
+            # Безопасное создание HTML
+            operations_html = ""
+            for op in operations:
+                # Проверяем что op это строка
+                if isinstance(op, str):
+                    op_text = op.replace('<', '&lt;').replace('>', '&gt;')
+                    operations_html += f'<li>{op_text}</li>'
+                else:
+                    operations_html += f'<li>{str(op)}</li>'
+            
+            html_text = f"""
+                <h3 style='color: #dc3545;'>❌ Счет нельзя удалить</h3>
+                <p>Счет <b>{account_name.replace('<', '&lt;').replace('>', '&gt;')}</b> имеет связанные операции:</p>
+                <ul>
+                    {operations_html}
+                </ul>
+                <p><b>Всего операций:</b> {total_operations}</p>
+                <p style='color: #6c757d;'>
+                    Для удаления счета необходимо сначала удалить все связанные операции 
+                    или перенести их на другие счета.
+                </p>
+            """
+            
+            # Показываем диалог с деталями
+            details_dialog = QDialog(self)
+            details_dialog.setWindowTitle("Нельзя удалить счет")
+            details_dialog.resize(450, 350)
+            
+            layout = QVBoxLayout(details_dialog)
+            
+            text_edit = QTextEdit()
+            text_edit.setReadOnly(True)
+            text_edit.setHtml(html_text)
+            
+            layout.addWidget(text_edit)
+            
+            button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+            button_box.accepted.connect(details_dialog.accept)
+            layout.addWidget(button_box)
+            
+            details_dialog.exec()
+            
+        except Exception as e:
+            # Упрощенное сообщение в случае ошибки форматирования
+            QMessageBox.warning(
+                self,
+                "Невозможно удалить счет",
+                f"Счет '{result_info.get('account_name', 'Неизвестный')}' имеет связанные операции и не может быть удален.\n\n"
+                f"Всего операций: {result_info.get('total_operations', 0)}"
+            )
+        
+    
+    def _show_delete_result(self, success, error, blocked, system=0):
+        """Показывает результат удаления"""
+        messages = []
+        if success > 0:
+            messages.append(f"✅ Удалено: {success}")
+        if blocked > 0:
+            messages.append(f"🚫 Заблокировано: {blocked}")
+        if error > 0:
+            messages.append(f"❌ Ошибок: {error}")
+        if system > 0:
+            messages.append(f"⚠️ Системных: {system}")
+        
+        if messages:
+            self.show_status(" | ".join(messages), "info" if success > 0 else "warning")
+    
+    def _show_account_stats(self):
+        """Показывает статистику по выбранному счету"""
+        selected_items = self.accounts_tree.selectedItems()
+        if not selected_items:
+            self.show_status("Выберите счет для статистики", "warning")
+            return
+        
+        item = selected_items[0]
+        account_id = item.data(0, Qt.UserRole)
+        account_name = item.text(0)
+        
+        try:
+            # Получаем данные счета
+            account_obj = self.database.accounts.get_by_id(account_id)
+            if account_obj is None:
+                self.show_status("Данные счета не найдены", "error")
+                return
+            account_data = account_obj.to_dict()
+            
+            # Получаем транзакции
+            transactions = self.database.transactions.get_transactions(filters={'account_id': account_id, 'exclude_corrections': True})
+            
+            # Получаем переводы
+            transfers = self.database.transfers.get_transfers(filters={'account_id': account_id})
+            
+            # Вычисляем статистику
+            total_income = 0.0
+            total_expense = 0.0
+            transaction_count = len(transactions)
+            
+            for t in transactions:
+                amount = t['amount']
+                if t['type'] == 'income':
+                    total_income += amount
+                elif t['type'] == 'expense':
+                    total_expense += abs(amount)
+            
+            transfers_in = 0
+            transfers_out = 0
+            
+            for t in transfers:
+                if t['to_account_id'] == account_id:
+                    transfers_in += 1
+                elif t['from_account_id'] == account_id:
+                    transfers_out += 1
+            
+            # Формируем сообщение
+            stats_text = f"📊 Статистика счета: {account_data['name']}\n\n"
+            stats_text += f"💰 Текущий баланс: {account_data['current_balance']:.2f} {account_data['currency']}\n"
+            stats_text += f"📈 Всего доходов: {total_income:.2f} {account_data['currency']}\n"
+            stats_text += f"📉 Всего расходов: {total_expense:.2f} {account_data['currency']}\n"
+            stats_text += f"🔄 Чистый поток: {total_income - total_expense:.2f} {account_data['currency']}\n\n"
+            
+            stats_text += f"📋 Количество операций:\n"
+            stats_text += f"   • Транзакций: {transaction_count}\n"
+            stats_text += f"   • Входящих переводов: {transfers_in}\n"
+            stats_text += f"   • Исходящих переводов: {transfers_out}\n"
+            stats_text += f"   • Всего: {transaction_count + transfers_in + transfers_out}\n\n"
+            
+            stats_text += f"🗓️ Тип счета: {account_data['type']}\n"
+            
+            if account_data['type'] == 'Credit Card':
+                stats_text += f"💳 Кредитный лимит: {account_data.get('credit_limit', 0.0):.2f} {account_data['currency']}\n"
+                stats_text += f"📅 День платежа: {account_data.get('payment_due_day', 1)}\n"
+                stats_text += f"📊 Мин. платеж: {account_data.get('min_payment_percent', 5.0):.1f}%\n"
+            
+            # Дата создания
+            created_at = account_data.get('created_at', '')
+            if created_at:
+                if isinstance(created_at, str):
+                    stats_text += f"📅 Создан: {created_at[:10]}\n"
+            
+            # Показываем диалог
+            stats_dialog = QDialog(self)
+            stats_dialog.setWindowTitle(f"Статистика: {account_data['name']}")
+            stats_dialog.resize(400, 400)
+            
+            layout = QVBoxLayout(stats_dialog)
+            
+            text_edit = QTextEdit()
+            text_edit.setReadOnly(True)
+            text_edit.setPlainText(stats_text)
+            text_edit.setFont(QFont("Consolas", 10))
+            
+            layout.addWidget(text_edit)
+            
+            button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+            button_box.accepted.connect(stats_dialog.accept)
+            layout.addWidget(button_box)
+            
+            stats_dialog.exec()
+            
+        except Exception as e:
+            self.show_status(f"Ошибка статистики: {str(e)[:50]}", "error")
+            logger.error(f"Ошибка показа статистики: {e}")
+    
+    # --- Вспомогательные методы ---
+    
+    def show_status(self, message, message_type="info"):
+        """Показывает сообщение в статус-баре"""
+        # Устанавливаем CSS классы для стилизации
+        class_name = f"status status-{message_type} status-bold"
+        self.status_bar.setProperty("class", class_name)
+        self.status_bar.setText(message)
+        # Принудительно обновляем стиль после изменения свойства
+        self.status_bar.style().unpolish(self.status_bar)
+        self.status_bar.style().polish(self.status_bar)
+        
+        # Автоматический сброс через 3 секунды
+        if message_type != "error":  # Ошибки не сбрасываем автоматически
+            QTimer.singleShot(3000, self._reset_status)
+    
+    def _reset_status(self):
+        """Сбрасывает статус-бар"""
+        self.status_bar.setText("Готово")
+        self.status_bar.setProperty("class", "status")
+        self.status_bar.style().unpolish(self.status_bar)
+        self.status_bar.style().polish(self.status_bar)
+
+
+# Алиас для обратной совместимости
+AccountDialog = AccountManagementDialog

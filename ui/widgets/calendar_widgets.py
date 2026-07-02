@@ -1,17 +1,19 @@
-import tkinter as tk
-from tkinter import ttk
-from datetime import datetime, timedelta, date
+# ui/widgets/calendar_widgets.py
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+                              QLabel, QGridLayout, QFrame, QDialog, QLineEdit)
+from PySide6.QtCore import Qt, QDate, Signal
+from PySide6.QtGui import QFont
 import calendar
-from tkinter import simpledialog
-import tkinter.font as tkfont
- 
+from datetime import date
 
 
-class TtkCalendar(ttk.Frame):
-    """Кастомный календарь для TtkDateEntry."""
-    def __init__(self, parent, command=None, **kwargs):
-        super().__init__(parent, **kwargs)
-        self.command = command
+class TtkCalendar(QWidget):
+    """Кастомный календарь"""
+    
+    date_selected = Signal(QDate)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
         
         self.russian_months = {
             1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
@@ -19,140 +21,183 @@ class TtkCalendar(ttk.Frame):
             9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
         }
         
-        self.year_var = tk.IntVar(self, value=date.today().year)
-        self.month_var = tk.IntVar(self, value=date.today().month)
+        self.current_date = QDate.currentDate()
+        self.selected_date = None
         
-        self._build_header()
-        self._build_calendar_grid()
+        self.setup_ui()
         
-        self._update_calendar()
-
-    def _build_header(self):
-        header_frame = ttk.Frame(self)
-        header_frame.pack(fill="x")
-
-        ttk.Button(header_frame, text="◀", command=self._prev_month, width=3).pack(side="left", padx=2)
+    def setup_ui(self):
+        layout = QVBoxLayout()
         
-        self.month_label = ttk.Label(header_frame, text="", font="TkDefaultFont 10 bold")
-        self.month_label.pack(side="left", expand=True, fill="x")
+        # Header
+        header_layout = QHBoxLayout()
         
-        self.year_label = ttk.Label(header_frame, text="", font="TkDefaultFont 10 bold")
-        self.year_label.pack(side="right", expand=True, fill="x")
+        self.prev_btn = QPushButton("◀")
+        self.prev_btn.setFixedWidth(30)
+        self.prev_btn.clicked.connect(self.prev_month)
+        header_layout.addWidget(self.prev_btn)
         
-        ttk.Button(header_frame, text="▶", command=self._next_month, width=3).pack(side="right", padx=2)
-
-    def _build_calendar_grid(self):
-        self.calendar_frame = ttk.Frame(self)
-        self.calendar_frame.pack()
+        self.month_label = QLabel()
+        self.month_label.setFont(QFont("", 10, QFont.Bold))
+        self.month_label.setAlignment(Qt.AlignCenter)
+        header_layout.addWidget(self.month_label, 1)
+        
+        self.year_label = QLabel()
+        self.year_label.setFont(QFont("", 10, QFont.Bold))
+        self.year_label.setAlignment(Qt.AlignCenter)
+        header_layout.addWidget(self.year_label, 1)
+        
+        self.next_btn = QPushButton("▶")
+        self.next_btn.setFixedWidth(30)
+        self.next_btn.clicked.connect(self.next_month)
+        header_layout.addWidget(self.next_btn)
+        
+        layout.addLayout(header_layout)
+        
+        # Days grid
+        self.grid_layout = QGridLayout()
+        self.grid_layout.setSpacing(2)
         
         days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
         for i, day in enumerate(days):
-            ttk.Label(self.calendar_frame, text=day, width=4, anchor="center", 
-                     font="TkDefaultFont 8 bold").grid(row=0, column=i, pady=2)
-        
+            label = QLabel(day)
+            label.setAlignment(Qt.AlignCenter)
+            label.setFont(QFont("", 8, QFont.Bold))
+            self.grid_layout.addWidget(label, 0, i)
+            
         self.day_buttons = []
-        for row in range(6): 
+        for row in range(6):
             row_buttons = []
-            for col in range(7): 
-                btn = ttk.Button(self.calendar_frame, text="", width=4,
-                               command=lambda r=row, c=col: self._select_date(r, c))
-                btn.grid(row=row+1, column=col, padx=1, pady=1)
+            for col in range(7):
+                btn = QPushButton()
+                btn.setFixedSize(30, 30)
+                btn.setFont(QFont("", 8))
+                btn.clicked.connect(lambda checked, r=row, c=col: self.select_date(r, c))
+                self.grid_layout.addWidget(btn, row + 1, col)
                 row_buttons.append(btn)
             self.day_buttons.append(row_buttons)
-
-    def _update_calendar(self):
-        year = self.year_var.get()
-        month = self.month_var.get()
-
-        self.month_label.config(text=f"{self.russian_months[month]}")
-        self.year_label.config(text=str(year))
-
+            
+        layout.addLayout(self.grid_layout)
+        self.setLayout(layout)
+        
+        self.update_calendar()
+        
+    def update_calendar(self):
+        year = self.current_date.year()
+        month = self.current_date.month()
+        
+        self.month_label.setText(self.russian_months[month])
+        self.year_label.setText(str(year))
+        
         cal = calendar.Calendar(firstweekday=0)
         month_days = cal.monthdatescalendar(year, month)
         
         for row_idx, week in enumerate(month_days):
             for col_idx, day_date in enumerate(week):
                 btn = self.day_buttons[row_idx][col_idx]
-                btn.config(text=str(day_date.day))
+                day = day_date.day
+                btn.setText(str(day))
                 btn.day_date = day_date
-
+                
                 if day_date.month == month:
-                    btn.config(state="normal", style="")
+                    btn.setEnabled(True)
+                    btn.setStyleSheet("")
                 else:
-                    btn.config(state="disabled")
-                    btn.config(text=f"{day_date.day}", style="Secondary.TButton")
-
-    def _prev_month(self):
-        current_month = self.month_var.get()
-        current_year = self.year_var.get()
+                    btn.setEnabled(False)
+                    btn.setStyleSheet("color: gray;")
+                    
+    def prev_month(self):
+        self.current_date = self.current_date.addMonths(-1)
+        self.update_calendar()
         
-        if current_month == 1:
-            self.month_var.set(12)
-            self.year_var.set(current_year - 1)
-        else:
-            self.month_var.set(current_month - 1)
-            
-        self._update_calendar()
-
-    def _next_month(self):
-        current_month = self.month_var.get()
-        current_year = self.year_var.get()
+    def next_month(self):
+        self.current_date = self.current_date.addMonths(1)
+        self.update_calendar()
         
-        if current_month == 12:
-            self.month_var.set(1)
-            self.year_var.set(current_year + 1)
-        else:
-            self.month_var.set(current_month + 1)
-            
-        self._update_calendar()
-
-    def _select_date(self, row, col):
+    def select_date(self, row, col):
         btn = self.day_buttons[row][col]
-        if btn['state'] == 'normal':
+        if btn.isEnabled():
             selected_date = btn.day_date
-            if self.command:
-                self.command(selected_date, close=True)
+            qdate = QDate(selected_date.year, selected_date.month, selected_date.day)
+            self.selected_date = qdate
+            self.date_selected.emit(qdate)
 
-class TtkDateEntry(ttk.Frame):
-    """Виджет для ввода даты с календарным попапом."""
-    def __init__(self, parent, **kwargs):
+
+class TtkDateEntry(QWidget):
+    """Виджет для ввода даты с календарным попапом"""
+    
+    date_changed = Signal(str)
+    
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.var = tk.StringVar(self)
         
-        self.entry = ttk.Entry(self, textvariable=self.var, width=12)
-        self.entry.pack(side="left", fill="x", expand=True)
+        self.calendar_dialog = None
         
-        self.calendar_button = ttk.Button(self, text="📅", command=self._show_calendar, width=3)
-        self.calendar_button.pack(side="right", padx=(2, 0))
-
-        self.var.set(date.today().strftime('%Y-%m-%d'))
-        self._calendar_toplevel = None
-
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.date_input = QLineEdit()
+        self.date_input.setFixedWidth(100)
+        self.date_input.setText(date.today().strftime('%Y-%m-%d'))
+        self.date_input.textChanged.connect(self.date_changed)
+        layout.addWidget(self.date_input)
+        
+        self.calendar_btn = QPushButton("📅")
+        self.calendar_btn.setFixedWidth(30)
+        self.calendar_btn.clicked.connect(self.show_calendar)
+        layout.addWidget(self.calendar_btn)
+        
+        self.setLayout(layout)
+        
     def get_date(self):
-        return self.var.get()
-
-    def _show_calendar(self, event=None):
-        top = tk.Toplevel(self)
-        top.title("Выбрать дату")
+        return self.date_input.text()
         
-        self.entry.update_idletasks()
-        x = self.entry.winfo_rootx()
-        y = self.entry.winfo_rooty() + self.entry.winfo_height()
-        top.geometry(f"+{x}+{y}")
+    def set_date(self, date_str):
+        self.date_input.setText(date_str)
         
-        cal = TtkCalendar(top, command=self._set_selected_date)
-        cal.pack(padx=10, pady=10)
+    def show_calendar(self):
+        if self.calendar_dialog is None or not self.calendar_dialog.isVisible():
+            self.calendar_dialog = CalendarDialog(self)
+            self.calendar_dialog.date_selected.connect(self.on_date_selected)
+            
+        pos = self.mapToGlobal(self.calendar_btn.pos())
+        pos.setY(pos.y() + self.calendar_btn.height())
+        self.calendar_dialog.move(pos)
+        self.calendar_dialog.exec()
         
-        ttk.Button(top, text="Сегодня", 
-                  command=lambda: self._set_selected_date(date.today(), close=True)).pack(pady=5)
-
-        self._calendar_toplevel = top 
-        top.transient(self.winfo_toplevel())
-        top.grab_set()
-        top.focus_set()
-
-    def _set_selected_date(self, selected_date, close=False):
-        if selected_date:
-            self.var.set(selected_date.strftime('%Y-%m-%d'))
-        if close and self._calendar_toplevel and self._calendar_toplevel.winfo_exists():
-            self._calendar_toplevel.destroy()
+    def on_date_selected(self, qdate):
+        date_str = qdate.toString('yyyy-MM-dd')
+        self.set_date(date_str)
+        self.date_changed.emit(date_str)
+        
+        
+class CalendarDialog(QDialog):
+    date_selected = Signal(QDate)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Popup)
+        
+        layout = QVBoxLayout()
+        
+        self.calendar = TtkCalendar()
+        self.calendar.date_selected.connect(self.on_date_selected)
+        layout.addWidget(self.calendar)
+        
+        today_btn = QPushButton("Сегодня")
+        today_btn.clicked.connect(self.select_today)
+        layout.addWidget(today_btn)
+        
+        self.setLayout(layout)
+        
+    def on_date_selected(self, qdate):
+        self.date_selected.emit(qdate)
+        self.accept()
+        
+    def select_today(self):
+        self.calendar.selected_date = QDate.currentDate()
+        self.date_selected.emit(QDate.currentDate())
+        self.accept()

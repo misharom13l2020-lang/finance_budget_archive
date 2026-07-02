@@ -1,0 +1,85 @@
+/* ui/styles/global.qss - основной файл стилей */
+/* Цветовая палитра и CSS переменные */
+
+* {
+    /* Основные цвета */
+    --primary-color: #2c3e50;
+    --primary-light: #34495e;
+    --primary-dark: #1a252f;
+    --secondary-color: #3498db;
+    --secondary-light: #5dade2;
+    --secondary-dark: #21618c;
+    --success-color: #27ae60;
+    --success-light: #2ecc71;
+    --success-dark: #1e8449;
+    --danger-color: #e74c3c;
+    --danger-light: #ec7063;
+    --danger-dark: #c0392b;
+    --warning-color: #f39c12;
+    --warning-light: #f5b041;
+    --warning-dark: #d68910;
+    --info-color: #17a2b8;
+    --info-light: #48c9b0;
+    --info-dark: #138496;
+    
+    /* Нейтральные цвета */
+    --background-color: white;
+    --surface-color: #ffffff;
+    --border-color: #dee2e6;
+    --text-color: #212529;
+    --text-secondary: #6c757d;
+    --disabled-color: #adb5bd;
+    
+    /* Тени */
+    --shadow-light: 0 2px 4px rgba(0, 0, 0, 0.1);
+    --shadow-medium: 0 4px 8px rgba(0, 0, 0, 0.15);
+    --shadow-heavy: 0 8px 16px rgba(0, 0, 0, 0.2);
+    
+    /* Радиусы скругления */
+    --border-radius-small: 3px;
+    --border-radius-medium: 5px;
+    --border-radius-large: 8px;
+    
+    /* Отступы */
+    --padding-small: 4px;
+    --padding-medium: 8px;
+    --padding-large: 12px;
+    
+    /* Шрифты */
+    --font-family: "Segoe UI", "Arial", sans-serif;
+    --font-size-small: 11px;
+    --font-size-normal: 13px;
+    --font-size-large: 15px;
+    --font-size-title: 18px;
+}
+
+/* Базовые настройки приложения */
+QWidget {
+    background-color: var(--background-color);
+    color: var(--text-color);
+    font-family: var(--font-family);
+    font-size: var(--font-size-normal);
+    selection-background-color: var(--secondary-color);
+    selection-color: white;
+}
+
+/* Стили для заголовков */
+QLabel.title,
+QLabel.header {
+    font-weight: bold;
+    color: var(--text-color);
+}
+
+/* Светло-голубое выделение при наведении для различных виджетов */
+QTreeWidget::item:hover,
+QTableView::item:hover,
+QTableWidget::item:hover,
+QListWidget::item:hover,
+QTreeView::item:hover {
+    background-color: #e3f2fd; /* светло-голубой */
+}
+
+/* Импорт модульных стилей */
+@import "buttons.qss";
+@import "forms.qss";
+@import "tables.qss";

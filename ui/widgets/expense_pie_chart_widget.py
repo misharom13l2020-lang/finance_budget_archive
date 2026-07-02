@@ -1,6 +1,6 @@
-# ui/widgets/expense_pie_chart_widget.py - Виджет круговой диаграммы расходов за прошлый месяц
+# ui/widgets/expense_pie_chart_widget.py - Виджет круговой диаграммы расходов
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QPushButton, QWidget, QSizePolicy)
+                               QComboBox, QPushButton, QWidget, QSizePolicy)
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 import matplotlib.pyplot as plt
@@ -12,7 +12,7 @@ import numpy as np
 
 
 class ExpensePieChartWidget(QFrame):
-    """Виджет для отображения круговой диаграммы расходов по категориям за прошлый месяц."""
+    """Виджет для отображения круговой диаграммы расходов по категориям."""
     
     # Сигнал для уведомления об обновлении данных
     data_updated = Signal()
@@ -43,8 +43,8 @@ class ExpensePieChartWidget(QFrame):
         header_layout = QHBoxLayout(header_widget)
         header_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Заголовок с указанием периода
-        title_label = QLabel("📊 Расходы за прошлый месяц")
+        # Заголовок
+        title_label = QLabel("📊 Расходы по категориям")
         title_font = QFont()
         title_font.setBold(True)
         title_font.setPointSize(11)
@@ -53,6 +53,12 @@ class ExpensePieChartWidget(QFrame):
         
         # Растягивающийся разделитель
         header_layout.addStretch()
+        
+        # Период
+        self.period_combo = QComboBox()
+        self.period_combo.addItems(["Текущий месяц", "Прошлый месяц", "Текущий год", "Все время"])
+        self.period_combo.setFixedWidth(150)
+        header_layout.addWidget(self.period_combo)
         
         # Кнопка обновления
         self.refresh_btn = QPushButton("Обновить")
@@ -76,6 +82,9 @@ class ExpensePieChartWidget(QFrame):
     
     def setup_connections(self):
         """Настройка сигналов и слотов."""
+        # Изменение периода → обновление диаграммы
+        self.period_combo.currentTextChanged.connect(self.update_chart)
+        
         # Кнопка обновления → обновление диаграммы
         self.refresh_btn.clicked.connect(self.update_chart)
         
@@ -93,60 +102,152 @@ class ExpensePieChartWidget(QFrame):
         if data_type in [None, 'transactions', 'categories']:
             self.update_timer.start(500)  # Обновление через 500 мс
     
-    def get_last_month_range(self):
-        """Возвращает диапазон дат для прошлого месяца."""
+    def get_date_range(self):
+        """Возвращает диапазон дат для выбранного периода."""
         today = datetime.now()
+        period = self.period_combo.currentText()
         
-        # Получаем первый день текущего месяца
-        first_day_current_month = today.replace(day=1)
+        if period == "Текущий месяц":
+            # С 1-го числа текущего месяца до конца месяца
+            date_from = datetime(today.year, today.month, 1)
+            date_to = (date_from.replace(month=date_from.month % 12 + 1, 
+                     year=date_from.year + date_from.month // 12) - 
+                     timedelta(days=1))
+            
+        elif period == "Прошлый месяц":
+            # Весь предыдущий месяц
+            prev_month = today.replace(day=1) - timedelta(days=1)
+            date_from = prev_month.replace(day=1)
+            date_to = prev_month
+            
+        elif period == "Текущий год":
+            # С 1 января по 31 декабря текущего года
+            date_from = datetime(today.year, 1, 1)
+            date_to = datetime(today.year, 12, 31)
+            
+        else:  # "Все время"
+            date_from = datetime(2000, 1, 1)  # Условная начальная дата
+            date_to = datetime(2100, 12, 31)   # Условная конечная дата
         
-        # Получаем последний день предыдущего месяца
-        last_day_prev_month = first_day_current_month - timedelta(days=1)
-        
-        # Получаем первый день предыдущего месяца
-        first_day_prev_month = last_day_prev_month.replace(day=1)
-        
-        # Название месяца на русском
-        month_names = {
-            1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
-            5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
-            9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
-        }
-        
-        month_name = month_names.get(first_day_prev_month.month, f"Месяц {first_day_prev_month.month}")
-        
-        return first_day_prev_month, last_day_prev_month, month_name
+        return date_from, date_to
     
     def clear_chart(self):
-        """Очищает текущую диаграмму."""
-        # Удаляем все виджеты из chart_layout
-        for i in reversed(range(self.chart_layout.count())):
-            widget = self.chart_layout.itemAt(i).widget()
-            if widget:
-                widget.setParent(None)
-                widget.deleteLater()
+        """Очищает текущую диаграмму и все связанные виджеты."""
+        try:
+            # 1. Удаляем все виджеты из chart_layout
+            self._clear_layout_widgets(self.chart_layout)
+            
+            # 2. Закрываем и освобождаем ресурсы matplotlib
+            if self.figure:
+                try:
+                    plt.close(self.figure)
+                except:
+                    pass  # Игнорируем ошибки при закрытии
+                
+                # Сбрасываем ссылки для освобождения памяти
+                self.figure = None
+                self.ax = None
+            
+            # 3. Удаляем canvas если он еще существует
+            if self.canvas:
+                try:
+                    self.canvas.setParent(None)
+                    self.canvas.deleteLater()
+                except:
+                    pass
+                finally:
+                    self.canvas = None
+            
+            # 4. Принудительная сборка мусора для освобождения памяти
+            import gc
+            gc.collect()
+            
+        except Exception as e:
+            print(f"[ExpensePieChartWidget] Ошибка при очистке диаграммы: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _clear_layout_widgets(self, layout):
+        """Рекурсивно удаляет все виджеты из layout."""
+        if not layout:
+            return
         
-        # Закрываем фигуру matplotlib
-        if self.figure:
+        try:
+            # Идем в обратном порядке, чтобы избежать изменения индексов
+            for i in reversed(range(layout.count())):
+                item = layout.itemAt(i)
+                
+                if not item:
+                    continue
+                    
+                if item.widget():
+                    # Удаляем виджет
+                    widget = item.widget()
+                    try:
+                        widget.setParent(None)
+                        widget.deleteLater()
+                    except:
+                        pass
+                        
+                elif item.layout():
+                    # Рекурсивно очищаем вложенный layout
+                    self._clear_layout_widgets(item.layout())
+                    
+                    # Удаляем сам layout
+                    sub_layout = item.layout()
+                    try:
+                        # Удаляем все элементы из sub_layout
+                        while sub_layout.count():
+                            sub_item = sub_layout.takeAt(0)
+                            if sub_item.widget():
+                                w = sub_item.widget()
+                                w.setParent(None)
+                                w.deleteLater()
+                    except:
+                        pass
+                    
+        except Exception as e:
+            print(f"[ExpensePieChartWidget] Ошибка при очистке layout: {e}")
+            
+    def cleanup_resources(self):
+        """Полная очистка всех ресурсов виджета."""
+        # Останавливаем таймеры
+        if hasattr(self, 'update_timer'):
             try:
-                plt.close(self.figure)
+                self.update_timer.stop()
+                self.update_timer.deleteLater()
             except:
                 pass
-            self.figure = None
         
-        # Сбрасываем ссылки
-        self.canvas = None
-        self.ax = None
+        # Отключаем сигналы от БД
+        if self.db:
+            try:
+                self.db.data_updated.disconnect(self.schedule_update)
+            except:
+                pass
         
-        # Чистим память
-        import gc
-        gc.collect()
-    
+        # Очищаем диаграмму
+        self.clear_chart()
+        
+        # Очищаем комбобоксы и другие виджеты
+        if hasattr(self, 'period_combo'):
+            try:
+                self.period_combo.clear()
+            except:
+                pass
+        
+        print("[ExpensePieChartWidget] Ресурсы очищены")
+
+    def closeEvent(self, event):
+        """Обработчик закрытия виджета."""
+        self.cleanup_resources()
+        super().closeEvent(event)
+
     def get_expense_data_from_db(self):
-        """Получает данные о расходах за прошлый месяц из базы данных."""
+        """Получает данные о расходах из базы данных."""
         try:
-            # Получаем диапазон дат для прошлого месяца
-            date_from, date_to, month_name = self.get_last_month_range()
+            # Получаем диапазон дат
+            date_from, date_to = self.get_date_range()
             
             # Запрашиваем статистику по категориям
             stats = self.db.get_category_statistics(
@@ -167,11 +268,11 @@ class ExpensePieChartWidget(QFrame):
                             'color': category.get('color', '#3498db')
                         })
             
-            return expense_data, month_name
+            return expense_data
             
         except Exception as e:
             print(f"Ошибка при получении данных из БД: {e}")
-            return [], "Ошибка"
+            return []
     
     def generate_colors(self, num_colors):
         """Генерирует цвета для категорий."""
@@ -197,14 +298,12 @@ class ExpensePieChartWidget(QFrame):
                 self.show_no_data_message("Нет подключения к БД")
                 return
             
-            # 2. Получаем данные о расходах за прошлый месяц
-            expense_data, month_name = self.get_expense_data_from_db()
+            # 2. Получаем данные о расходах
+            expense_data = self.get_expense_data_from_db()
             
             # 3. Проверяем наличие данных
             if not expense_data:
-                date_from, date_to, _ = self.get_last_month_range()
-                date_range = f"{date_from.strftime('%d.%m.%Y')} - {date_to.strftime('%d.%m.%Y')}"
-                self.show_no_data_message(f"Нет данных по расходам за {month_name}\n({date_range})")
+                self.show_no_data_message("Нет данных по расходам за выбранный период")
                 return
             
             # 4. Сортируем данные по сумме (от большего к меньшему)
@@ -299,12 +398,10 @@ class ExpensePieChartWidget(QFrame):
                           title_fontsize=9,
                           framealpha=0.9)
             
-            # 11. Добавляем информацию о месяце и общую сумму
-            date_from, date_to, _ = self.get_last_month_range()
-            center_text = f"Расходы за {month_name}\n"
-            center_text += f"{date_from.strftime('%d.%m.%Y')} - {date_to.strftime('%d.%m.%Y')}\n\n"
-            center_text += f"Всего: {total_amount:,.0f} ₽\n"
-            center_text += f"Категорий: {len(expense_data)}"
+            # 11. Добавляем общую сумму в центр диаграммы
+            center_text = f"Всего расходов:\n{total_amount:,.0f} ₽\n\n"
+            center_text += f"Категорий: {len(expense_data)}\n"
+            center_text += f"Период: {self.period_combo.currentText().lower()}"
             
             self.ax.text(0, 0, center_text,
                        ha='center', va='center',
@@ -334,7 +431,6 @@ class ExpensePieChartWidget(QFrame):
         """Отображает сообщение при отсутствии данных."""
         no_data_label = QLabel(message)
         no_data_label.setAlignment(Qt.AlignCenter)
-        no_data_label.setWordWrap(True)
         no_data_label.setStyleSheet("""
             QLabel {
                 color: #7f8c8d;
@@ -352,7 +448,6 @@ class ExpensePieChartWidget(QFrame):
         """Отображает сообщение об ошибке."""
         error_label = QLabel(f"Ошибка загрузки данных:\n{error_text}")
         error_label.setAlignment(Qt.AlignCenter)
-        error_label.setWordWrap(True)
         error_label.setStyleSheet("""
             QLabel {
                 color: #c0392b;
@@ -373,27 +468,13 @@ class ExpensePieChartWidget(QFrame):
             self.db.data_updated.connect(self.schedule_update)
         self.update_chart()
     
-    def get_current_period_info(self):
-        """Возвращает информацию о текущем периоде (прошлый месяц)."""
-        date_from, date_to, month_name = self.get_last_month_range()
-        return {
-            'month_name': month_name,
-            'date_from': date_from,
-            'date_to': date_to,
-            'date_range_str': f"{date_from.strftime('%d.%m.%Y')} - {date_to.strftime('%d.%m.%Y')}"
-        }
-    
-    def export_chart(self, filename=None):
+    def export_chart(self, filename="расходы_по_категориям.png"):
         """Экспортирует диаграмму в файл."""
-        if not filename:
-            date_from, date_to, month_name = self.get_last_month_range()
-            filename = f"расходы_{month_name}_{date_from.strftime('%Y%m')}.png"
-        
         if self.figure:
             try:
                 self.figure.savefig(filename, dpi=150, bbox_inches='tight')
-                return True, filename
+                return True
             except Exception as e:
                 print(f"Ошибка при экспорте диаграммы: {e}")
-                return False, str(e)
-        return False, "Нет данных для экспорта"
+                return False
+        return False

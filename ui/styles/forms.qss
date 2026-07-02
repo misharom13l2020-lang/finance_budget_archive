@@ -1,0 +1,144 @@
+/* ui/styles/forms.qss - стили для полей ввода и форм */
+
+/* QLineEdit */
+QLineEdit {
+    padding-left: 8px;
+    padding-right: 8px;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 2px; /* чуть меньше скругление чем у кнопок */
+    color: var(--text-color);
+    selection-background-color: var(--secondary-color);
+    selection-color: white;
+}
+
+QLineEdit:focus {
+    border-color: var(--secondary-color);
+    outline: none;
+}
+
+QLineEdit:disabled {
+    background-color: #f1f1f1;
+    color: var(--disabled-color);
+}
+
+QLineEdit:read-only {
+    background-color: #f8f9fa;
+    color: var(--text-secondary);
+}
+
+/* QComboBox */
+QComboBox {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 2px; /* чуть меньше скругление чем у кнопок */
+    padding: 0 8px;
+    min-width: 75px;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 20px;
+    border-left: 1px solid var(--border-color);
+    border-top-right-radius: var(--border-radius-small);
+    border-bottom-right-radius: var(--border-radius-small);
+}
+
+QComboBox::down-arrow {
+    image: url(./images/arrow-down.png);
+    width: 12px;
+    height: 12px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    selection-background-color: var(--secondary-color);
+    selection-color: white;
+    outline: none;
+}
+
+/* QDateEdit, QDateTimeEdit */
+QDateEdit, QDateTimeEdit {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 2px; /* чуть меньше скругление чем у кнопок */
+    padding: 0 8px;
+}
+
+QDateEdit::drop-down, QDateTimeEdit::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 20px;
+    border-left: 1px solid var(--border-color);
+}
+
+/* QSpinBox, QDoubleSpinBox */
+QSpinBox, QDoubleSpinBox {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 2px; /* чуть меньше скругление чем у кнопок */
+    padding: 0 8px;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 16px;
+    border-left: 1px solid var(--border-color);
+    border-top-right-radius: var(--border-radius-small);
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 16px;
+    border-left: 1px solid var(--border-color);
+    border-bottom-right-radius: var(--border-radius-small);
+}
+
+/* QTextEdit */
+QTextEdit {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 2px; /* чуть меньше скругление чем у кнопок */
+    padding: 4px;
+    selection-background-color: var(--secondary-color);
+    selection-color: white;
+}
+
+QTextEdit:focus {
+    border-color: var(--secondary-color);
+}
+
+/* QPlainTextEdit */
+QPlainTextEdit {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 2px; /* чуть меньше скругление чем у кнопок */
+    padding: 4px;
+    selection-background-color: var(--secondary-color);
+    selection-color: white;
+}
+
+/* QLabel - названия полей */
+QLabel {
+    color: #495057; /* серый цвет как в старом диалоге */
+    font-size: 12px;
+}
+
+/* QGroupBox - заголовки групп */
+QGroupBox {
+    font-weight: bold;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    margin-top: 6px;
+    padding-top: 6px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 3px 0 3px;
+}
